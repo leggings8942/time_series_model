@@ -478,7 +478,7 @@ class Vector_Auto_Regressive:
         self.ma_inf = ma_inf
         return self.ma_inf
 
-    def irf(self, priod=30, orth=False):
+    def irf(self, period=30, orth=False):
 
         if orth == True:
             L = np.linalg.cholesky(self.sigma)
@@ -486,7 +486,7 @@ class Vector_Auto_Regressive:
             P = np.dot(L, np.linalg.inv(D))
             D = D ** 2
 
-            irf = np.zeros([priod + 1, self.train_data.shape[1], self.train_data.shape[1]])
+            irf = np.zeros([period + 1, self.train_data.shape[1], self.train_data.shape[1]])
             irf[0, :, :] = np.dot(P, np.identity(self.train_data.shape[1]))
             #irf[0, :, :] = np.dot(P, np.sqrt(D))
 
@@ -494,22 +494,22 @@ class Vector_Auto_Regressive:
             for _ in range(1, self.lags):
                 x_data = np.vstack([x_data, np.zeros([self.train_data.shape[1], self.train_data.shape[1]])])
             
-            for idx in range(1, priod + 1):
+            for idx in range(1, period + 1):
                 #tmp = self.alpha.reshape(self.lags, self.train_data.shape[1], self.train_data.shape[1])
                 #tmp = tmp.swapaxes(1,2).reshape(self.lags * self.train_data.shape[1], self.train_data.shape[1])
                 #irf[idx, :, :] = np.dot(x_data, tmp)
                 irf[idx, :, :] = np.dot(self.alpha.T, x_data)
                 x_data = np.vstack([irf[idx, :, :], x_data[:-self.train_data.shape[1], :]])
-            """irf_data = self.irf(priod, orth=False)
+            """irf_data = self.irf(period, orth=False)
             L = np.linalg.cholesky(self.sigma)
             irf = np.array([np.dot(coefs, L) for coefs in irf_data])"""
 
         else:
-            irf = self.ma_replace(priod)
+            irf = self.ma_replace(period)
 
         return irf
     
-    def fevd(self, priod=30):
+    def fevd(self, period=30):
         # 不偏推定共分散量を通常の推定共分散量に直す
         tmp_sigma = self.sigma * self.unbiased_dispersion / self.dispersion
         L = np.linalg.cholesky(tmp_sigma)
@@ -517,7 +517,7 @@ class Vector_Auto_Regressive:
         P = np.dot(L, np.linalg.inv(D))
         D = D ** 2
         
-        fevd = np.zeros([priod + 1, self.train_data.shape[1], self.train_data.shape[1]])
+        fevd = np.zeros([period + 1, self.train_data.shape[1], self.train_data.shape[1]])
         fevd[0, :, :] = P
         
         x_data = fevd[0, :, :]
@@ -525,21 +525,21 @@ class Vector_Auto_Regressive:
             x_data = np.vstack([x_data, np.zeros([self.train_data.shape[1], self.train_data.shape[1]])])
         
         fevd[0, :, :] = fevd[0, :, :] ** 2
-        for idx in range(1, priod + 1):
+        for idx in range(1, period + 1):
             fevd[idx, :, :] = np.dot(self.alpha.T, x_data)
             x_data = np.vstack([fevd[idx, :, :], x_data[:-self.train_data.shape[1], :]])
             
             fevd[idx, :, :] = fevd[idx, :, :] ** 2
         
         fevd = fevd.cumsum(axis=0)
-        for idx in range(0, priod + 1):
+        for idx in range(0, period + 1):
             fevd[idx, :, :] = np.dot(fevd[idx, :, :], D)
         
-        for idx in range(0, priod + 1):
+        for idx in range(0, period + 1):
             fevd[idx, :, :] = fevd[idx, :, :] / np.sum(fevd[idx, :, :], axis=1).reshape([self.train_data.shape[1], 1])
-        """fevd = self.irf(priod=priod, orth=True)
+        """fevd = self.irf(period=period, orth=True)
         fevd = (fevd ** 2).cumsum(axis=0)
-        for idx in range(0, priod + 1):
+        for idx in range(0, period + 1):
             fevd[idx, :, :] = fevd[idx, :, :] / np.sum(fevd[idx, :, :], axis=1).reshape([self.train_data.shape[1], 1])"""
         
         return fevd
