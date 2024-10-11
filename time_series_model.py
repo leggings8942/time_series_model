@@ -9,7 +9,7 @@ def normal_distribution(x, loc=0, scale=1):
     return stats.norm.pdf(x, loc=loc, scale=scale)
 
 def multivariate_normal_distrubution(x, mean, cov):
-    return stats.multivariate_normal.pdf(x, mean=mean, cov=cov)
+    return stats.multivariate_normal(mean=mean, cov=cov, allow_singular=True).pdf(x)
 
 class Update_Rafael:
     def __init__(self, alpha=0.001, beta1=0.9, beta2=0.999, beta3=0.9999, rate=1e-3):
@@ -94,7 +94,6 @@ class Auto_Regressive:
             b = y_data
             x = np.dot(np.linalg.inv(np.dot(A.T, A)), np.dot(A.T, b))
             self.alpha, self.alpha0 = x[0:s], x[s]
-            self.alpha0 = self.alpha0.reshape([1, x.shape[1]])
         else:
             raise
 
@@ -384,13 +383,13 @@ class Vector_Auto_Regressive:
         inf = 0
         if ic == "aic":
             #inf = -2 * log_likelihood + 2 * k
-            inf = np.log(np.linalg.det(tmp_sigma)) + 2 * k / num
+            inf = np.log(np.abs(np.linalg.det(tmp_sigma))) + 2 * k / num
         elif ic == "bic":
             #inf = -2 * log_likelihood + k * np.log(num)
-            inf = np.log(np.linalg.det(tmp_sigma)) + k * np.log(num) / num
+            inf = np.log(np.abs(np.linalg.det(tmp_sigma))) + k * np.log(num) / num
         elif ic == "hqic":
             #inf = -2 * log_likelihood + 2 * k * np.log(np.log(num))
-            inf = np.log(np.linalg.det(tmp_sigma)) + 2 * k * np.log(np.log(num)) / num
+            inf = np.log(np.abs(np.linalg.det(tmp_sigma))) + 2 * k * np.log(np.log(num)) / num
         else:
             raise
 
