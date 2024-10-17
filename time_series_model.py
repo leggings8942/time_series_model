@@ -599,14 +599,14 @@ class Dickey_Fuller_Test:
             self.trend_1st, self.trend_2nd = np.zeros([1, x.shape[1]]), np.zeros([1, x.shape[1]])
         
         elif self.regression == "ct": # 定数項あり&1次のトレンドあり
-            A = np.hstack([x_data, np.ones([num, 1]), np.arange(num).reshape([num, 1])])
+            A = np.hstack([x_data, np.ones([num, 1]), np.arange(1, num+1).reshape([num, 1])])
             b = y_data
             x = np.dot(np.linalg.inv(np.dot(A.T, A)), np.dot(A.T, b))
             self.alpha,     self.alpha0    = x[0:s, :], x[s, :]
             self.trend_1st, self.trend_2nd = x[s+1, :], np.zeros([1, x.shape[1]])
             
         elif self.regression == "ctt":# 定数項あり&1次のトレンドあり&2次のトレンドあり
-            A = np.hstack([x_data, np.ones([num, 1]), np.arange(num).reshape([num, 1]), np.arange(num).reshape([num, 1]) ** 2])
+            A = np.hstack([x_data, np.ones([num, 1]), np.arange(1, num+1).reshape([num, 1]), np.arange(1, num+1).reshape([num, 1]) ** 2])
             b = y_data
             x = np.dot(np.linalg.inv(np.dot(A.T, A)), np.dot(A.T, b))
             self.alpha,     self.alpha0    = x[0:s, :], x[s, :]
@@ -629,7 +629,7 @@ class Dickey_Fuller_Test:
         # よくわからないが、この式を採用することにする
         denominator   = y_data.shape[0] - y_data.shape[1] * self.lags - 1
         
-        y_pred        = self.predict(x_data, np.arange(num).reshape([num, 1]))
+        y_pred        = self.predict(x_data, np.arange(1, num+1).reshape([num, 1]))
         diff          = y_pred - y_data
         self.sigma    = np.dot(diff.T, diff) / denominator
         self.data_num = num
@@ -819,11 +819,11 @@ class Dickey_Fuller_Test:
         
         elif self.regression == "ct": # 定数項あり&1次のトレンドあり
             esti_coef = np.hstack([self.alpha, self.alpha0, self.trend_1st]).ravel()
-            x_d_all   = np.hstack([x_data, np.ones([num, 1]), np.arange(num).reshape([num, 1])])
+            x_d_all   = np.hstack([x_data, np.ones([num, 1]), np.arange(1, num+1).reshape([num, 1])])
             
         elif self.regression == "ctt":# 定数項あり&1次のトレンドあり&2次のトレンドあり
             esti_coef = np.hstack([self.alpha, self.alpha0, self.trend_1st, self.trend_2nd]).ravel()
-            x_d_all   = np.hstack([x_data, np.ones([num, 1]), np.arange(num).reshape([num, 1]), np.arange(num).reshape([num, 1]) ** 2])
+            x_d_all   = np.hstack([x_data, np.ones([num, 1]), np.arange(1, num+1).reshape([num, 1]), np.arange(1, num+1).reshape([num, 1]) ** 2])
         
         
         tvalue      = (esti_coef - 1) / np.sqrt(np.diag(self.sigma * np.linalg.inv(np.dot(x_d_all.T, x_d_all))))
@@ -864,6 +864,8 @@ class Augmented_Dickey_Fuller_Test:
         self.test_data           = test_data
         self.regression          = regression.lower()
         self.lags                = 0
+        self.conv_data           = np.zeros([1, 1])
+        self.train_data          = np.zeros([1, 1])
         self.alpha               = np.zeros([1, 1])
         self.alpha0              = np.zeros([1, 1])
         self.trend_1st           = np.zeros([1, 1])
@@ -911,10 +913,13 @@ class Augmented_Dickey_Fuller_Test:
         return True
     
     def fit(self, lags=1, offset=0) -> bool:
-        tmp_train_data = self.test_data[offset:]
+        tmp_train_data = np.diff(self.test_data, axis=0)
+        tmp_train_data = tmp_train_data[offset:]
         nobs           = len(tmp_train_data)
         x_data         = np.array([tmp_train_data[t-lags : t][::-1].ravel() for t in range(lags, nobs)])
-        y_data         = tmp_train_data[lags:]
+        x_data         = np.hstack([self.test_data[offset+lags:-1, 0].reshape([x_data.shape[0], 1]), x_data])
+        y_data         = self.test_data[offset+lags+1:]
+        #y_data         = tmp_train_data[-len(x_data):]
         
         tmp_judge = y_data - np.mean(y_data, axis=0)
         tmp_judge = np.dot(tmp_judge.T, tmp_judge)
@@ -938,14 +943,14 @@ class Augmented_Dickey_Fuller_Test:
             self.trend_1st, self.trend_2nd = np.zeros([1, x.shape[1]]), np.zeros([1, x.shape[1]])
         
         elif self.regression == "ct": # 定数項あり&1次のトレンドあり
-            A = np.hstack([x_data, np.ones([num, 1]), np.arange(num).reshape([num, 1])])
+            A = np.hstack([x_data, np.ones([num, 1]), np.arange(1, num+1).reshape([num, 1])])
             b = y_data
             x = np.dot(np.linalg.inv(np.dot(A.T, A)), np.dot(A.T, b))
             self.alpha,     self.alpha0    = x[0:s, :], x[s, :]
             self.trend_1st, self.trend_2nd = x[s+1, :], np.zeros([1, x.shape[1]])
             
         elif self.regression == "ctt":# 定数項あり&1次のトレンドあり&2次のトレンドあり
-            A = np.hstack([x_data, np.ones([num, 1]), np.arange(num).reshape([num, 1]), np.arange(num).reshape([num, 1]) ** 2])
+            A = np.hstack([x_data, np.ones([num, 1]), np.arange(1, num+1).reshape([num, 1]), np.arange(1, num+1).reshape([num, 1]) ** 2])
             b = y_data
             x = np.dot(np.linalg.inv(np.dot(A.T, A)), np.dot(A.T, b))
             self.alpha,     self.alpha0    = x[0:s, :], x[s, :]
@@ -954,10 +959,12 @@ class Augmented_Dickey_Fuller_Test:
         else:
             raise
         
-        self.alpha     = self.alpha.reshape([s, x.shape[1]])
-        self.alpha0    = self.alpha0.reshape([1, x.shape[1]])
-        self.trend_1st = self.trend_1st.reshape([1, x.shape[1]])
-        self.trend_2nd = self.trend_2nd.reshape([1, x.shape[1]])
+        self.conv_data  = x_data
+        self.train_data = A
+        self.alpha      = self.alpha.reshape([s, x.shape[1]])
+        self.alpha0     = self.alpha0.reshape([1, x.shape[1]])
+        self.trend_1st  = self.trend_1st.reshape([1, x.shape[1]])
+        self.trend_2nd  = self.trend_2nd.reshape([1, x.shape[1]])
         
         # なぜか、共分散行列の計算に特殊な計算方法が採用されている
         # statsmodels.tsa.vector_ar.var_model.VAR を参照のこと
@@ -968,7 +975,7 @@ class Augmented_Dickey_Fuller_Test:
         # よくわからないが、この式を採用することにする
         denominator   = y_data.shape[0] - y_data.shape[1] * lags - 1
         
-        y_pred        = self.predict(x_data, np.arange(num).reshape([num, 1]))
+        y_pred        = self.predict(x_data, np.arange(1, num+1).reshape([num, 1]), isXDformat=True)
         diff          = y_pred - y_data
         self.sigma    = np.dot(diff.T, diff) / denominator
         self.data_num = num
@@ -977,7 +984,7 @@ class Augmented_Dickey_Fuller_Test:
 
         return True
     
-    def predict(self, test_data, time_data = np.array([[]])) -> np.ndarray:
+    def predict(self, test_data, time_data=np.array([[]]), isXDformat=False) -> np.ndarray:
         if type(test_data) is pd.core.frame.DataFrame:
             test_data = test_data.to_numpy()
         
@@ -997,6 +1004,15 @@ class Augmented_Dickey_Fuller_Test:
             print(f"time_data shape = {time_data.shape}")
             print("エラー：：次元数または形が一致しません。")
             raise
+        
+        if isXDformat == False:
+            tmp_train_data = np.diff(test_data, axis=0)
+            nobs           = len(tmp_train_data)
+            x_data         = np.array([tmp_train_data[t-self.lags : t][::-1].ravel() for t in range(self.lags, nobs)])
+            x_data         = np.hstack([self.test_data[self.lags:-1, 0].reshape([x_data.shape[0], 1]), x_data])
+            
+            test_data      = x_data
+            time_data      = time_data[:len(test_data)]
         
         y_pred = np.dot(test_data, self.alpha) + self.alpha0
         
@@ -1022,13 +1038,10 @@ class Augmented_Dickey_Fuller_Test:
         # math:: -\left(\frac{T}{2}\right) \left(\ln\left|\Omega\right| - K\ln\left(2\pi\right) - K\right)
         # この式が元になっているらしい
         # さっぱり理解できないため、通常通りに計算することにする
-        
-        nobs   = len(self.test_data)
-        x_data = np.array([self.test_data[t-self.lags : t][::-1].ravel() for t in range(self.lags, nobs)])
-        y_data = self.test_data[self.lags:]
 
+        y_data = self.test_data[self.lags:]
         num, _ = y_data.shape
-        y_pred = self.predict(x_data, np.arange(num).reshape([num, 1]))
+        y_pred = self.predict(self.test_data, np.arange(1, num+1).reshape([num, 1]))
 
         # 不偏推定共分散量を通常の推定共分散量に直す
         tmp_sigma      = self.sigma * self.unbiased_dispersion / self.dispersion
@@ -1223,45 +1236,37 @@ class Augmented_Dickey_Fuller_Test:
         starstat = _tau_stars[self.regression]
         
         
-        nobs      = len(self.test_data)
-        x_data    = np.array([self.test_data[t-self.lags : t][::-1].ravel() for t in range(self.lags, nobs)])
-        num, _    = x_data.shape
-        esti_coef = np.hstack([self.alpha, self.alpha0]).ravel()
-        x_d_all   = np.hstack([x_data, np.ones([num, 1])])
+        x_d_all  = self.train_data
         if   self.regression == "n":  # 定数項なし&トレンドなし
             esti_coef = np.hstack([self.alpha]).ravel()
-            x_d_all   = np.hstack([x_data])
             
         elif self.regression == "c":  # 定数項あり&トレンドなし
-            esti_coef = np.hstack([self.alpha, self.alpha0]).ravel()
-            x_d_all   = np.hstack([x_data, np.ones([num, 1])])
+            esti_coef = np.hstack([self.alpha.T, self.alpha0]).ravel()
         
         elif self.regression == "ct": # 定数項あり&1次のトレンドあり
-            esti_coef = np.hstack([self.alpha, self.alpha0, self.trend_1st]).ravel()
-            x_d_all   = np.hstack([x_data, np.ones([num, 1]), np.arange(num).reshape([num, 1])])
+            esti_coef = np.hstack([self.alpha.T, self.alpha0, self.trend_1st]).ravel()
             
         elif self.regression == "ctt":# 定数項あり&1次のトレンドあり&2次のトレンドあり
-            esti_coef = np.hstack([self.alpha, self.alpha0, self.trend_1st, self.trend_2nd]).ravel()
-            x_d_all   = np.hstack([x_data, np.ones([num, 1]), np.arange(num).reshape([num, 1]), np.arange(num).reshape([num, 1]) ** 2])
+            esti_coef = np.hstack([self.alpha.T, self.alpha0, self.trend_1st, self.trend_2nd]).ravel()
         
         
-        tvalue      = (esti_coef - 1) / np.sqrt(np.diag(self.sigma * np.linalg.inv(np.dot(x_d_all.T, x_d_all))))
-        self.tvalue = tvalue[0]
-        if self.tvalue > maxstat[0]:
+        self.tvalue = (esti_coef - 1) / np.sqrt(np.diag(self.sigma * np.linalg.inv(np.dot(x_d_all.T, x_d_all))))
+        tvalue      = self.tvalue[0]
+        if tvalue > maxstat[0]:
             self.pvalue = 1.0
             return self.pvalue
         
-        elif self.tvalue < minstat[0]:
+        elif tvalue < minstat[0]:
             self.pvalue = 0.0
             return self.pvalue
         
-        if self.tvalue <= starstat[0]:
+        if tvalue <= starstat[0]:
             tau_coef    = _tau_smallps[self.regression][0]
-            self.pvalue = sp.stats.norm.cdf(np.polyval(tau_coef[::-1], self.tvalue))
+            self.pvalue = sp.stats.norm.cdf(np.polyval(tau_coef[::-1], tvalue))
         else:
             # Note: above is only for z stats
             tau_coef    = _tau_largeps[self.regression][0]
-            self.pvalue = sp.stats.norm.cdf(np.polyval(tau_coef[::-1], self.tvalue))
+            self.pvalue = sp.stats.norm.cdf(np.polyval(tau_coef[::-1], tvalue))
         
-        return self.tvalue, self.pvalue
+        return tvalue, self.pvalue
 
