@@ -4,6 +4,33 @@ import pandas as pd
 from scipy import stats
 from random import Random
 
+def modified_cholesky(x):
+    if type(x) is list:
+        x = np.array(x)
+        
+    if x.ndim != 2:
+        print(f"x dims = {x.ndim}")
+        raise ValueError("エラー：：次元数が一致しません。")
+    
+    if x.shape[0] != x.shape[1]:
+        print(f"x shape = {x.shape}")
+        raise ValueError("エラー：：正方行列ではありません。")
+    
+    n = x.shape[0]
+    d = np.diag(x).copy()
+    L = np.tril(x, k=-1).copy() + np.identity(n)
+    
+    for idx1 in range(1, n):
+        prev = idx1 - 1
+        tmp  = d[0:prev] if d[0:prev].size != 0 else 0
+        tmp  = np.dot(L[idx1:, 0:prev], (L[prev, 0:prev] * tmp).T)
+        
+        L[idx1:, prev] = (L[idx1:, prev] - tmp) / d[prev]
+        d[idx1]       -= np.sum((L[idx1, 0:idx1] ** 2) * d[0:idx1])
+    
+    d = np.diag(d)
+    return L, d
+
 def normal_distribution(x, loc=0, scale=1):
     return stats.norm.pdf(x, loc=loc, scale=scale)
 
@@ -277,11 +304,6 @@ class Vector_Auto_Regressive:
         x_data         = np.array([tmp_train_data[t-lags : t][::-1].ravel() for t in range(lags, nobs)])
         y_data         = tmp_train_data[lags:]
         
-        tmp_judge = y_data - np.mean(y_data, axis=0)
-        tmp_judge = np.dot(tmp_judge.T, tmp_judge)
-        if np.linalg.det(tmp_judge) < 1e-16:
-            raise ValueError("Contains invalid time series data.")
-        
         self.lags = lags
         num, s    = x_data.shape
         if solver == "normal equations":
@@ -306,6 +328,7 @@ class Vector_Auto_Regressive:
         y_pred        = self.predict(x_data)
         diff          = y_pred - y_data
         self.sigma    = np.dot(diff.T, diff) / denominator
+        self.sigma    = np.where(np.abs(self.sigma) < 1e-16, 1e-16, self.sigma)
         self.solver   = solver
         self.data_num = num
         self.unbiased_dispersion = denominator
@@ -477,17 +500,16 @@ class Vector_Auto_Regressive:
         self.ma_inf = ma_inf
         return self.ma_inf
 
-    def irf(self, period=30, orth=False):
+    def irf(self, period=30, orth=False, isStdDevShock=True):
 
         if orth == True:
-            L = np.linalg.cholesky(self.sigma)
-            D = np.diag(np.diag(L))
-            P = np.dot(L, np.linalg.inv(D))
-            D = D ** 2
+            A, D = modified_cholesky(self.sigma)
 
             irf = np.zeros([period + 1, self.train_data.shape[1], self.train_data.shape[1]])
-            irf[0, :, :] = np.dot(P, np.identity(self.train_data.shape[1]))
-            #irf[0, :, :] = np.dot(P, np.sqrt(D))
+            if isStdDevShock:
+                irf[0, :, :] = np.dot(A, np.sqrt(D))
+            else:
+                irf[0, :, :] = np.dot(A, np.identity(self.train_data.shape[1]))
 
             x_data = irf[0, :, :]
             for _ in range(1, self.lags):
@@ -511,13 +533,10 @@ class Vector_Auto_Regressive:
     def fevd(self, period=30):
         # 不偏推定共分散量を通常の推定共分散量に直す
         tmp_sigma = self.sigma * self.unbiased_dispersion / self.dispersion
-        L = np.linalg.cholesky(tmp_sigma)
-        D = np.diag(np.diag(L))
-        P = np.dot(L, np.linalg.inv(D))
-        D = D ** 2
+        A, D = modified_cholesky(tmp_sigma)
         
         fevd = np.zeros([period + 1, self.train_data.shape[1], self.train_data.shape[1]])
-        fevd[0, :, :] = P
+        fevd[0, :, :] = A
         
         x_data = fevd[0, :, :]
         for _ in range(1, self.lags):
@@ -578,11 +597,6 @@ class Dickey_Fuller_Test:
         x_data         = np.array([tmp_train_data[t-self.lags : t][::-1].ravel() for t in range(self.lags, nobs)])
         y_data         = tmp_train_data[self.lags:]
         
-        tmp_judge = y_data - np.mean(y_data, axis=0)
-        tmp_judge = np.dot(tmp_judge.T, tmp_judge)
-        if np.linalg.det(tmp_judge) < 1e-16:
-            raise ValueError("Contains invalid time series data.")
-        
         num, s = x_data.shape
         if   self.regression == "n":  # 定数項なし&トレンドなし
             A = x_data
@@ -632,6 +646,7 @@ class Dickey_Fuller_Test:
         y_pred        = self.predict(x_data, np.arange(1, num+1).reshape([num, 1]))
         diff          = y_pred - y_data
         self.sigma    = np.dot(diff.T, diff) / denominator
+        self.sigma    = np.where(np.abs(self.sigma) < 1e-16, 1e-16, self.sigma)
         self.data_num = num
         self.unbiased_dispersion = denominator
         self.dispersion          = y_data.shape[0]
@@ -921,11 +936,6 @@ class Augmented_Dickey_Fuller_Test:
         y_data         = self.test_data[offset+lags+1:]
         #y_data         = tmp_train_data[-len(x_data):]
         
-        tmp_judge = y_data - np.mean(y_data, axis=0)
-        tmp_judge = np.dot(tmp_judge.T, tmp_judge)
-        if np.linalg.det(tmp_judge) < 1e-16:
-            raise ValueError("Contains invalid time series data.")
-        
         self.lags = lags
         num, s    = x_data.shape
         if   self.regression == "n":  # 定数項なし&トレンドなし
@@ -978,6 +988,7 @@ class Augmented_Dickey_Fuller_Test:
         y_pred        = self.predict(x_data, np.arange(1, num+1).reshape([num, 1]), isXDformat=True)
         diff          = y_pred - y_data
         self.sigma    = np.dot(diff.T, diff) / denominator
+        self.sigma    = np.where(np.abs(self.sigma) < 1e-16, 1e-16, self.sigma)
         self.data_num = num
         self.unbiased_dispersion = denominator
         self.dispersion          = y_data.shape[0]
