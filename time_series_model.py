@@ -109,6 +109,9 @@ class Auto_Regressive:
             raise
 
         nobs   = len(train_data)
+        if nobs - lags < 0:# データ数に対して、最尤推定対象が多すぎる
+            return False
+        
         x_data = np.array([train_data[t-lags : t][::-1].ravel() for t in range(lags, nobs)])
         y_data = train_data[lags:]
         
@@ -192,9 +195,14 @@ class Auto_Regressive:
 
         model_param = []
         for lag in range(1, maxlag + 1):
-            self.fit(train_data, lags=lag, solver=solver)
-            rel = self.model_reliability(train_data, ic=ic)
-            model_param.append([rel, lag, self.alpha, self.alpha0])
+            flg = self.fit(train_data, lags=lag, solver=solver)
+            
+            if flg:
+                rel = self.model_reliability(train_data, ic=ic)
+                model_param.append([rel, lag, self.alpha, self.alpha0])
+            else:
+                rel = np.finfo(np.float64).max
+                model_param.append([rel, lag, self.alpha, self.alpha0])
 
             if isVisible == True:
                 print(f"AR({lag}) | {rel}", flush=True)
@@ -301,6 +309,9 @@ class Vector_Auto_Regressive:
     def fit(self, lags=1, offset=0, solver="normal equations") -> bool:
         tmp_train_data = self.train_data[offset:]
         nobs           = len(tmp_train_data)
+        if nobs - lags < 0:# データ数に対して、最尤推定対象が多すぎる
+            return False
+        
         x_data         = np.array([tmp_train_data[t-lags : t][::-1].ravel() for t in range(lags, nobs)])
         y_data         = tmp_train_data[lags:]
         
@@ -423,9 +434,14 @@ class Vector_Auto_Regressive:
 
         model_param = []
         for lag in range(1, maxlag + 1):
-            self.fit(lags=lag, offset=maxlag - lag, solver=solver)
-            rel = self.model_reliability(ic=ic)
-            model_param.append([rel, lag])
+            flg = self.fit(lags=lag, offset=maxlag - lag, solver=solver)
+            
+            if flg:
+                rel = self.model_reliability(ic=ic)
+                model_param.append([rel, lag])
+            else:
+                rel = np.finfo(np.float64).max
+                model_param.append([rel, lag])
 
             if isVisible == True:
                 print(f"AR({lag}) | {rel}", flush=True)
@@ -594,6 +610,9 @@ class Dickey_Fuller_Test:
     def fit(self) -> bool:
         tmp_train_data = self.test_data
         nobs           = len(tmp_train_data)
+        if nobs - self.lags < 0:# データ数に対して、最尤推定対象が多すぎる
+            return False
+        
         x_data         = np.array([tmp_train_data[t-self.lags : t][::-1].ravel() for t in range(self.lags, nobs)])
         y_data         = tmp_train_data[self.lags:]
         
@@ -931,6 +950,9 @@ class Augmented_Dickey_Fuller_Test:
         tmp_train_data = np.diff(self.test_data, axis=0)
         tmp_train_data = tmp_train_data[offset:]
         nobs           = len(tmp_train_data)
+        if nobs - lags - 1 < 0:# データ数に対して、最尤推定対象が多すぎる
+            return False
+        
         x_data         = np.array([tmp_train_data[t-lags : t][::-1].ravel() for t in range(lags, nobs)])
         x_data         = np.hstack([self.test_data[offset+lags:-1, 0].reshape([x_data.shape[0], 1]), x_data])
         y_data         = self.test_data[offset+lags+1:]
@@ -1098,9 +1120,14 @@ class Augmented_Dickey_Fuller_Test:
 
         model_param = []
         for lag in range(1, maxlag + 1):
-            self.fit(lags=lag, offset=maxlag - lag)
-            rel = self.model_reliability(ic=ic)
-            model_param.append([rel, lag])
+            flg = self.fit(lags=lag, offset=maxlag - lag)
+            
+            if flg:
+                rel = self.model_reliability(ic=ic)
+                model_param.append([rel, lag])
+            else:
+                rel = np.finfo(np.float64).max
+                model_param.append([rel, lag])
 
             if isVisible == True:
                 print(f"AR({lag}) | {rel}", flush=True)
