@@ -25,7 +25,8 @@ def modified_cholesky(x):
         tmp  = d[0:prev] if d[0:prev].size != 0 else 0
         tmp  = np.dot(L[idx1:, 0:prev], (L[prev, 0:prev] * tmp).T)
         
-        L[idx1:, prev] = (L[idx1:, prev] - tmp) / d[prev]
+        DIV  = d[prev] if d[prev] != 0 else 1e-16
+        L[idx1:, prev] = (L[idx1:, prev] - tmp) / DIV
         d[idx1]       -= np.sum((L[idx1, 0:idx1] ** 2) * d[0:idx1])
     
     d = np.diag(d)
