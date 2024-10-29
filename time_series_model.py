@@ -98,6 +98,16 @@ class Auto_Regressive:
         return None
 
     def fit(self, train_data, lags=1, solver="normal equations") -> bool:
+        # caution!!!
+        # OLS(Ordinary Learst Squares)推定量を計算する際に
+        # 擬似逆行列(pinv関数)を使用している箇所が存在する
+        # この処理は逆行列が存在しない場合(行列式が0の場合)に発火する
+        # しかし理論的には逆行列が存在しない時系列データの組み合わせは存在しない
+        # 入力された時系列データ自体にミスが存在する(0の定数列になっている等)可能性が高い
+        # statsmodels.tsa.vector_ar.var_model.VARではこのような時系列データを入力として与えた場合には
+        # エラーを出力するようになっている
+        # 本ライブラリにおいてエラーの出力を行わないのは、近似的にでも処理結果が欲しいためである
+        
         if type(train_data) is pd.core.series.Series:
             train_data = train_data.to_numpy()
         
@@ -340,6 +350,16 @@ class Vector_Auto_Regressive:
         return True
 
     def fit(self, lags=1, offset=0, solver="normal equations") -> bool:
+        # caution!!!
+        # OLS(Ordinary Learst Squares)推定量を計算する際に
+        # 擬似逆行列(pinv関数)を使用している箇所が存在する
+        # この処理は逆行列が存在しない場合(行列式が0の場合)に発火する
+        # しかし理論的には逆行列が存在しない時系列データの組み合わせは存在しない
+        # 入力された時系列データ自体にミスが存在する(0の定数列になっている等)可能性が高い
+        # statsmodels.tsa.vector_ar.var_model.VARではこのような時系列データを入力として与えた場合には
+        # エラーを出力するようになっている
+        # 本ライブラリにおいてエラーの出力を行わないのは、近似的にでも処理結果が欲しいためである
+        
         tmp_train_data = self.train_data[offset:]
         nobs           = len(tmp_train_data)
         
@@ -464,6 +484,13 @@ class Vector_Auto_Regressive:
         num = self.data_num
         k   = self.alpha.size + self.alpha0.size
         #log_likelihood = self.log_likelihood()
+        
+        # caution!!!
+        # 本ライブラリでは、データ数に対して最尤推定対象が多い場合にもできる限り処理を続けるように調整してある
+        # しかし、この場合に分散共分散行列の正定値性が保てなくなるという問題が発生する
+        # また、入力された時系列データ自体に誤りが存在する場合にも正定値性が保てなくなる
+        # 正定値行列でない場合には対数尤度の計算ができなくなる
+        # この問題の対策のために対数尤度の近似値を求める処理に変更していることに注意
         
         # 不偏推定共分散量を通常の推定共分散量に直す
         tmp_sigma = self.sigma * self.unbiased_dispersion / self.dispersion
@@ -685,6 +712,16 @@ class Dickey_Fuller_Test:
         self.learn_flg           = False
     
     def fit(self) -> bool:
+        # caution!!!
+        # OLS(Ordinary Learst Squares)推定量を計算する際に
+        # 擬似逆行列(pinv関数)を使用している箇所が存在する
+        # この処理は逆行列が存在しない場合(行列式が0の場合)に発火する
+        # しかし理論的には逆行列が存在しない時系列データの組み合わせは存在しない
+        # 入力された時系列データ自体にミスが存在する(0の定数列になっている等)可能性が高い
+        # statsmodels.tsa.vector_ar.var_model.VARではこのような時系列データを入力として与えた場合には
+        # エラーを出力するようになっている
+        # 本ライブラリにおいてエラーの出力を行わないのは、近似的にでも処理結果が欲しいためである
+        
         tmp_train_data = self.test_data
         nobs           = len(tmp_train_data)
         
@@ -762,7 +799,6 @@ class Dickey_Fuller_Test:
         y_pred         = self.predict(x_data, np.arange(1, num+1).reshape([num, 1]))
         diff           = y_pred - y_data
         self.sigma     = np.dot(diff.T, diff) / denominator
-        self.sigma     = np.where(np.abs(self.sigma) < 1e-16, 1e-16, self.sigma)
         self.data_num  = num
         self.unbiased_dispersion = denominator
         self.dispersion          = y_data.shape[0]
@@ -885,6 +921,16 @@ class Augmented_Dickey_Fuller_Test:
         self.learn_flg           = False
     
     def fit(self, lags=1, offset=0) -> bool:
+        # caution!!!
+        # OLS(Ordinary Learst Squares)推定量を計算する際に
+        # 擬似逆行列(pinv関数)を使用している箇所が存在する
+        # この処理は逆行列が存在しない場合(行列式が0の場合)に発火する
+        # しかし理論的には逆行列が存在しない時系列データの組み合わせは存在しない
+        # 入力された時系列データ自体にミスが存在する(0の定数列になっている等)可能性が高い
+        # statsmodels.tsa.vector_ar.var_model.VARではこのような時系列データを入力として与えた場合には
+        # エラーを出力するようになっている
+        # 本ライブラリにおいてエラーの出力を行わないのは、近似的にでも処理結果が欲しいためである
+        
         tmp_train_data = np.diff(self.test_data, axis=0)
         tmp_train_data = tmp_train_data[offset:]
         nobs           = len(tmp_train_data)
@@ -968,7 +1014,6 @@ class Augmented_Dickey_Fuller_Test:
         y_pred         = self.predict(x_data, np.arange(1, num+1).reshape([num, 1]), isXDformat=True)
         diff           = y_pred - y_data
         self.sigma     = np.dot(diff.T, diff) / denominator
-        self.sigma     = np.where(np.abs(self.sigma) < 1e-16, 1e-16, self.sigma)
         self.data_num  = num
         self.unbiased_dispersion = denominator
         self.dispersion          = y_data.shape[0]
@@ -1068,6 +1113,13 @@ class Augmented_Dickey_Fuller_Test:
         num = self.data_num
         k   = self.alpha.size + self.alpha0.size
         #log_likelihood = self.log_likelihood()
+        
+        # caution!!!
+        # 本ライブラリでは、データ数に対して最尤推定対象が多い場合にもできる限り処理を続けるように調整してある
+        # しかし、この場合に分散共分散行列の正定値性が保てなくなるという問題が発生する
+        # また、入力された時系列データ自体に誤りが存在する場合にも正定値性が保てなくなる
+        # 正定値行列でない場合には対数尤度の計算ができなくなる
+        # この問題の対策のために対数尤度の近似値を求める処理に変更していることに注意
         
         # 不偏推定共分散量を通常の推定共分散量に直す
         tmp_sigma = self.sigma * self.unbiased_dispersion / self.dispersion
