@@ -380,7 +380,6 @@ class Vector_Auto_Regressive:
         y_pred         = self.predict(x_data)
         diff           = y_pred - y_data
         self.sigma     = np.dot(diff.T, diff) / denominator
-        self.sigma     = np.where(np.abs(self.sigma) < 1e-16, 1e-16, self.sigma)
         self.solver    = solver
         self.data_num  = num
         self.unbiased_dispersion = denominator
