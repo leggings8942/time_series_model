@@ -491,6 +491,8 @@ class Vector_Auto_Regressive:
         # また、入力された時系列データ自体に誤りが存在する場合にも正定値性が保てなくなる
         # 正定値行列でない場合には対数尤度の計算ができなくなる
         # この問題の対策のために対数尤度の近似値を求める処理に変更していることに注意
+        # 参考URL:
+        # https://seetheworld1992.hatenablog.com/entry/2017/03/22/194932
         
         # 不偏推定共分散量を通常の推定共分散量に直す
         tmp_sigma = self.sigma * self.unbiased_dispersion / self.dispersion
@@ -1120,6 +1122,8 @@ class Augmented_Dickey_Fuller_Test:
         # また、入力された時系列データ自体に誤りが存在する場合にも正定値性が保てなくなる
         # 正定値行列でない場合には対数尤度の計算ができなくなる
         # この問題の対策のために対数尤度の近似値を求める処理に変更していることに注意
+        # 参考URL
+        # https://seetheworld1992.hatenablog.com/entry/2017/03/22/194932
         
         # 不偏推定共分散量を通常の推定共分散量に直す
         tmp_sigma = self.sigma * self.unbiased_dispersion / self.dispersion
