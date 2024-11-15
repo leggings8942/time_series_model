@@ -813,16 +813,18 @@ class Sparse_Vector_Auto_Regressive:
                 tmp_L  = np.dot(A.T, A) + self.l2_norm * np.identity(s + 1)
                 tmp_R1 = np.dot(A.T, b)
                 tmp_R2 = self.l1_norm * np.sign(tmp_R1)
-                tmp_R2[-1, :] = 0   # 切片に対するL1正則効果を無効にする
+                tmp_R2[-1, :] = 0     # 切片に対するL1正則効果を無効にする
                 x      = np.dot(np.linalg.inv(tmp_L),  tmp_R1 - tmp_R2)
-                x[np.abs(x) < self.l1_norm] = 0
+                l1_target = x[:-1, :] # 切片に対するL1正則効果を無効にする
+                l1_target[np.abs(l1_target) < self.l1_norm] = 0
             except np.linalg.LinAlgError as e:
                 tmp_L  = np.dot(A.T, A) + self.l2_norm * np.identity(s + 1)
                 tmp_R1 = np.dot(A.T, b)
                 tmp_R2 = self.l1_norm * np.sign(tmp_R1)
-                tmp_R2[-1, :] = 0   # 切片に対するL1正則効果を無効にする
+                tmp_R2[-1, :] = 0     # 切片に対するL1正則効果を無効にする
                 x      = np.dot(np.linalg.pinv(tmp_L), tmp_R1 - tmp_R2)
-                x[np.abs(x) < self.l1_norm] = 0
+                l1_target = x[:-1, :] # 切片に対するL1正則効果を無効にする
+                l1_target[np.abs(l1_target) < self.l1_norm] = 0
                 
             self.alpha, self.alpha0 = x[0:s, :], x[s, :]
             self.alpha0 = self.alpha0.reshape([1, x.shape[1]])
