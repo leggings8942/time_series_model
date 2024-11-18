@@ -135,7 +135,8 @@ class Auto_Regressive:
             A = np.hstack([x_data, np.ones([num, 1])])
             b = y_data
             try:
-                x = np.dot(np.linalg.inv( np.dot(A.T, A)), np.dot(A.T, b))
+                # x = np.dot(np.linalg.inv( np.dot(A.T, A)), np.dot(A.T, b))
+                x = np.linalg.solve(np.dot(A.T, A), np.dot(A.T, b))
             except np.linalg.LinAlgError as e:
                 x = np.dot(np.linalg.pinv(np.dot(A.T, A)), np.dot(A.T, b))
             
@@ -378,7 +379,8 @@ class Vector_Auto_Regressive:
             A = np.hstack([x_data, np.ones([num, 1])])
             b = y_data
             try:
-                x = np.dot(np.linalg.inv( np.dot(A.T, A)), np.dot(A.T, b))
+                # x = np.dot(np.linalg.inv( np.dot(A.T, A)), np.dot(A.T, b))
+                x = np.linalg.solve(np.dot(A.T, A), np.dot(A.T, b))
             except np.linalg.LinAlgError as e:
                 x = np.dot(np.linalg.pinv(np.dot(A.T, A)), np.dot(A.T, b))
                 
@@ -685,7 +687,15 @@ class Vector_Auto_Regressive:
 
 
 class Sparse_Vector_Auto_Regressive:
-    def __init__(self, train_data, l1_norm:float=0.01, l2_norm:float=1.0, tol:float=1e-7, max_iterate:int=100000, learning_rate:float=0.001, random_state=None) -> None:
+    def __init__(self,
+                 train_data,
+                 l1_norm:float=1.0,
+                 l2_norm:float=1.0,
+                 tol:float=1e-10,
+                 isStandardization:bool=True,
+                 max_iterate:int=100000,
+                 learning_rate:float=0.001,
+                 random_state=None) -> None:
         if type(train_data) is pd.core.frame.DataFrame:
             train_data = train_data.to_numpy()
         
@@ -704,6 +714,9 @@ class Sparse_Vector_Auto_Regressive:
         self.sigma               = np.zeros([1, 1])
         self.l1_norm             = l1_norm
         self.l2_norm             = l2_norm
+        self.isStandardization   = isStandardization
+        self.x_standardization   = np.empty([2, 1])
+        self.y_standardization   = np.empty([2, 1])
         self.tol                 = tol
         self.solver              = ""
         self.data_num            = 0
@@ -731,6 +744,9 @@ class Sparse_Vector_Auto_Regressive:
         buf = buf + [self.sigma.copy()]
         buf = buf + [self.l1_norm]
         buf = buf + [self.l2_norm]
+        buf = buf + [self.isStandardization]
+        buf = buf + [self.x_standardization]
+        buf = buf + [self.y_standardization]
         buf = buf + [self.tol]
         buf = buf + [self.solver]
         buf = buf + [self.data_num]
@@ -754,22 +770,28 @@ class Sparse_Vector_Auto_Regressive:
         self.sigma               = buf[4]
         self.l1_norm             = buf[5]
         self.l2_norm             = buf[6]
-        self.tol                 = buf[7]
-        self.solver              = buf[8]
-        self.data_num            = buf[9]
-        self.max_iterate         = buf[10]
-        self.correct_alpha       = buf[11]
-        self.correct_alpha0      = buf[12]
-        self.unbiased_dispersion = buf[13]
-        self.dispersion          = buf[14]
-        self.ma_inf              = buf[15]
-        self.learn_flg           = buf[16]
-        self.random_state        = buf[17]
-        self.random              = buf[18]
+        self.isStandardization   = buf[7]
+        self.x_standardization   = buf[8]
+        self.y_standardization   = buf[9]
+        self.tol                 = buf[10]
+        self.solver              = buf[11]
+        self.data_num            = buf[12]
+        self.max_iterate         = buf[13]
+        self.correct_alpha       = buf[14]
+        self.correct_alpha0      = buf[15]
+        self.unbiased_dispersion = buf[16]
+        self.dispersion          = buf[17]
+        self.ma_inf              = buf[18]
+        self.learn_flg           = buf[19]
+        self.random_state        = buf[20]
+        self.random              = buf[21]
         
         return True
+    
+    def soft_threshold(self, x, α):
+        return np.sign(x) * np.maximum(np.abs(x) - α, 0)
 
-    def fit(self, lags:int=1, offset:int=0, solver:str='normal equations') -> bool:
+    def fit(self, lags:int=1, offset:int=0, solver:str='coordinate descent') -> bool:
         # caution!!!
         # OLS(Ordinary Learst Squares)推定量を計算する際に
         # 擬似逆行列(pinv関数)を使用している箇所が存在する
@@ -796,43 +818,119 @@ class Sparse_Vector_Auto_Regressive:
         x_data         = np.array([tmp_train_data[t-lags : t][::-1].ravel() for t in range(lags, nobs)])
         y_data         = tmp_train_data[lags:]
         
+        # 正規化指定の有無
+        if self.isStandardization:
+            # x軸の正規化
+            _, s = x_data.shape
+            self.x_standardization    = np.empty([2, s])
+            self.x_standardization[0] = np.mean(x_data, axis=0)
+            self.x_standardization[1] = np.std( x_data, axis=0)
+
+            # 標準偏差が0の場合
+            zero_judge = (self.x_standardization[1] == 0)
+            self.x_standardization[0][zero_judge] = 0
+            self.x_standardization[1][zero_judge] = 1
+
+            x_data = (x_data - self.x_standardization[0]) / self.x_standardization[1]
+            
+            # y軸の正規化
+            _, s = y_data.shape
+            self.y_standardization    = np.empty([2, s])
+            self.y_standardization[0] = np.mean(y_data, axis=0)
+            self.y_standardization[1] = np.std( y_data, axis=0)
+
+            # 標準偏差が0の場合
+            zero_judge = (self.y_standardization[1] == 0)
+            self.y_standardization[0][zero_judge] = 0
+            self.y_standardization[1][zero_judge] = 1
+
+            y_data = (y_data - self.y_standardization[0]) / self.y_standardization[1]
+        
         self.lags = lags
         num, s    = x_data.shape
-        if solver == "normal equations":
+        if solver == "coordinate descent":
             # ラッソ最適化(L1正則化)とリッジ最適化(L2正則化)を行なっている
             # 注意点として、切片に対してはラッソ最適化を行わないことが挙げられる
             # リッジ最適化は一般に係数を0にするためではなく、最適化対象のパラメータ全体を小さく保つために利用される
             # 一方で、ラッソ最適化は係数を0にするために利用される手法である
             # そのため、一般にはラッソ最適化を切片に対しては適用しない習慣がある
             # このライブラリもこの習慣に従うことにする
-            # ラッソ最適化のアルゴリズムは自前のものであり、いわゆる座標降下法によるものではない
-            # 座標降下法は各変数に対して更新を行うため、計算量が比較的に大きい
-            # これはメジャライザー最適化も同様である
-            # 多少の正確性を犠牲にしても、高速に処理したかったのでこのような実装になった
-            # 座標降下法と比較して、アルゴリムオーダーレベルで高速である
+            # ラッソ最適化のアルゴリズムは自前のものであり、いわゆる座標降下法の亜種である
+            # 一般的な座標降下法は各変数に対して更新を行うため、計算量が比較的に大きい
+            # できる限り高速に処理を行いたかったので、このような実装になった
+            # このアルゴリズムと一般的な座標降下法との最大の差異は、逆行列を陽に計算するか・陰に計算するかの違いである
+            # 逆行列の計算を陽に計算することにより、かえって全体の計算量が減るように設計した
+            # これにより収束条件が、符号の一致のみに限定されたため比較的に早く収束することが期待できる
+            # このアルゴリズムの計算量は、O(ループ回数 × O(行列積))である
+            # N×M, M×Lの大きさを持つ行列A, Bを想定すると、行列積の計算量はO(NML)となる
+            # このSVARライブラリではそれぞれ、N=説明変数の数 M=説明変数の数 L=目的変数の数に対応している
+            # 一般的な座標降下法と比較して計算量オーダー O(ループ回数 × NML)は同じである
+            # しかしループ回数が少なくなること・定数項kの部分が小さいことが期待できるため、このアルゴリズムの方が高速に動作することを期待できる
+            # このアルゴリズムを利用するにあたって、学習対象データの正規化などの条件は特にない
+            # ただし、逆行列を必要とするため正則な学習データ行列であることが望ましい
             
-            #正規方程式
             A = np.hstack([x_data, np.ones([num, 1])])
             b = y_data
             try:
-                tmp_L  = np.dot(A.T, A) + self.l2_norm * np.identity(s + 1)
-                tmp_R1 = np.dot(A.T, b)
-                tmp_R2 = self.l1_norm * np.sign(tmp_R1)
-                tmp_R2[-1, :] = 0     # 切片に対するL1正則効果を無効にする
-                x      = np.dot(np.linalg.inv(tmp_L),  tmp_R1 - tmp_R2)
-                l1_target = x[:-1, :] # 切片に対するL1正則効果を無効にする
-                l1_target[np.abs(l1_target) < self.l1_norm] = 0
+                L = np.linalg.inv( np.dot(A.T, A) + self.l2_norm * np.identity(s + 1))
             except np.linalg.LinAlgError as e:
-                tmp_L  = np.dot(A.T, A) + self.l2_norm * np.identity(s + 1)
-                tmp_R1 = np.dot(A.T, b)
-                tmp_R2 = self.l1_norm * np.sign(tmp_R1)
-                tmp_R2[-1, :] = 0     # 切片に対するL1正則効果を無効にする
-                x      = np.dot(np.linalg.pinv(tmp_L), tmp_R1 - tmp_R2)
-                l1_target = x[:-1, :] # 切片に対するL1正則効果を無効にする
-                l1_target[np.abs(l1_target) < self.l1_norm] = 0
+                L = np.linalg.pinv(np.dot(A.T, A) + self.l2_norm * np.identity(s + 1))
+            finally:
+                R = np.dot(A.T, b)
+                T = np.dot(L, R)
+                D = np.diag(np.diag(L))
+                G = np.diag(L).reshape([s + 1, 1]).copy()
+                C = L - D
                 
+                # 切片に対して、L1正則を適用しない
+                G[s, 0] = 0
+                C[s, :] = 0
+                
+            x_old = self.soft_threshold(T, self.l1_norm * np.abs(G))
+            for _ in range(0, self.max_iterate):
+                tmp   = T - self.l1_norm * np.dot(C, np.sign(x_old))
+                x_new = self.soft_threshold(tmp, self.l1_norm * np.abs(G))
+                    
+                if not np.all(np.sign(x_new) == np.sign(x_old)):
+                    x_old = x_new
+                else:
+                    break
+            x = x_new
             self.alpha, self.alpha0 = x[0:s, :], x[s, :]
             self.alpha0 = self.alpha0.reshape([1, x.shape[1]])
+        elif solver == "ISTA":
+            # ラッソ最適化(L1正則化)とリッジ最適化(L2正則化)を行なっている
+            # 注意点として、切片に対してはラッソ最適化を行わないことが挙げられる
+            # リッジ最適化は一般に係数を0にするためではなく、最適化対象のパラメータ全体を小さく保つために利用される
+            # 一方で、ラッソ最適化は係数を0にするために利用される手法である
+            # そのため、一般にはラッソ最適化を切片に対しては適用しない習慣がある
+            # このライブラリもこの習慣に従うことにする
+            # 以下のアルゴリズムは一般的なメジャライザー最適化(ISTA: Iterative Shrinkage soft-Thresholding Algorithm)の亜種である
+            # 基本的な理論こそ違いはあるものの最終的な更新式は勾配法そのものであり、勾配法における最適化アルゴリズムを適用できる
+            # そのため、最適化アルゴリズムの一つであるRafael(自前アルゴリズム)をこのアルゴリズムに適用することにした
+            # 学習係数が定数である場合に比べて高速であることが期待できる
+            # このアルゴリズムを使用する際の注意点として、教師データ(X, Y)がそれぞれ正規化されている必要があることが挙げられる
+            # 正規化されていない場合にはうまく収束しないくなる等、アルゴリズムが機能しなくなる可能性がある
+            # isStandardization=True に設定しておけば、問題ない
+            
+            self.alpha  = self.random.random([s, y_data.shape[1]])
+            self.alpha0 = self.random.random([1, y_data.shape[1]])
+            for _ in range(0, self.max_iterate):
+                y_pred  = np.dot(x_data, self.alpha) + self.alpha0
+                
+                ΔLoss   = y_data - y_pred
+                Δalpha  = np.dot(x_data.T, ΔLoss) - self.l2_norm * self.alpha
+                Δalpha0 = np.sum(ΔLoss, axis=0)   - self.l2_norm * self.alpha0
+                
+                diff_alpha  = self.correct_alpha.update(Δalpha)
+                diff_alpha0 = self.correct_alpha0.update(Δalpha0)
+                
+                self.alpha  = self.soft_threshold(self.alpha + diff_alpha, self.l1_norm * self.correct_alpha.alpha)
+                self.alpha0 = self.alpha0 + diff_alpha0
+                
+                update_diff = np.sqrt(np.sum(Δalpha ** 2) + np.sum(Δalpha0 ** 2))
+                if update_diff <= self.tol:
+                    break
         else:
             raise
         
@@ -872,7 +970,12 @@ class Sparse_Vector_Auto_Regressive:
             print("エラー：：学習が完了していません。")
             raise
         
+        if self.isStandardization:
+            test_data = (test_data - self.x_standardization[0]) / self.x_standardization[1]
+        
         y_pred = np.dot(test_data, self.alpha) + self.alpha0
+        if self.isStandardization:
+            y_pred = y_pred * self.y_standardization[1] + self.y_standardization[0]
         
         return y_pred
     
@@ -962,7 +1065,7 @@ class Sparse_Vector_Auto_Regressive:
 
         return inf
 
-    def select_order(self, maxlag=15, ic="aic", solver="normal equations", isVisible=False) -> int:
+    def select_order(self, maxlag=15, ic="aic", solver="coordinate descent", isVisible=False) -> int:
         if isVisible == True:
             print(f"AR model | {ic}", flush=True)
         
@@ -1026,8 +1129,8 @@ class Sparse_Vector_Auto_Regressive:
         tmp_train_data = backup[0]
         tmp_lags       = backup[1]
         tmp_alpha      = backup[2]
-        tmp_solver     = backup[8]
-        tmp_data_num   = backup[9]
+        tmp_solver     = backup[11]
+        tmp_data_num   = backup[12]
 
         self.fit(lags=tmp_lags, solver=tmp_solver)
         rss1 = self.get_RSS()[caused]
@@ -1188,7 +1291,8 @@ class Dickey_Fuller_Test:
             A = x_data
             b = y_data
             try:
-                x = np.dot(np.linalg.inv( np.dot(A.T, A)), np.dot(A.T, b))
+                # x = np.dot(np.linalg.inv( np.dot(A.T, A)), np.dot(A.T, b))
+                x = np.linalg.solve(np.dot(A.T, A), np.dot(A.T, b))
             except np.linalg.LinAlgError as e:
                 x = np.dot(np.linalg.pinv(np.dot(A.T, A)), np.dot(A.T, b))
             
@@ -1199,7 +1303,8 @@ class Dickey_Fuller_Test:
             A = np.hstack([x_data, np.ones([num, 1])])
             b = y_data
             try:
-                x = np.dot(np.linalg.inv( np.dot(A.T, A)), np.dot(A.T, b))
+                # x = np.dot(np.linalg.inv( np.dot(A.T, A)), np.dot(A.T, b))
+                x = np.linalg.solve(np.dot(A.T, A), np.dot(A.T, b))
             except np.linalg.LinAlgError as e:
                 x = np.dot(np.linalg.pinv(np.dot(A.T, A)), np.dot(A.T, b))
             
@@ -1210,7 +1315,8 @@ class Dickey_Fuller_Test:
             A = np.hstack([x_data, np.ones([num, 1]), np.arange(1, num+1).reshape([num, 1])])
             b = y_data
             try:
-                x = np.dot(np.linalg.inv( np.dot(A.T, A)), np.dot(A.T, b))
+                # x = np.dot(np.linalg.inv( np.dot(A.T, A)), np.dot(A.T, b))
+                x = np.linalg.solve(np.dot(A.T, A), np.dot(A.T, b))
             except np.linalg.LinAlgError as e:
                 x = np.dot(np.linalg.pinv(np.dot(A.T, A)), np.dot(A.T, b))
             
@@ -1221,7 +1327,8 @@ class Dickey_Fuller_Test:
             A = np.hstack([x_data, np.ones([num, 1]), np.arange(1, num+1).reshape([num, 1]), np.arange(1, num+1).reshape([num, 1]) ** 2])
             b = y_data
             try:
-                x = np.dot(np.linalg.inv( np.dot(A.T, A)), np.dot(A.T, b))
+                # x = np.dot(np.linalg.inv( np.dot(A.T, A)), np.dot(A.T, b))
+                x = np.linalg.solve(np.dot(A.T, A), np.dot(A.T, b))
             except np.linalg.LinAlgError as e:
                 x = np.dot(np.linalg.pinv(np.dot(A.T, A)), np.dot(A.T, b))
             
@@ -1401,7 +1508,8 @@ class Augmented_Dickey_Fuller_Test:
             A = x_data
             b = y_data
             try:
-                x = np.dot(np.linalg.inv( np.dot(A.T, A)), np.dot(A.T, b))
+                # x = np.dot(np.linalg.inv( np.dot(A.T, A)), np.dot(A.T, b))
+                x = np.linalg.solve(np.dot(A.T, A), np.dot(A.T, b))
             except np.linalg.LinAlgError as e:
                 x = np.dot(np.linalg.pinv(np.dot(A.T, A)), np.dot(A.T, b))
             
@@ -1412,7 +1520,8 @@ class Augmented_Dickey_Fuller_Test:
             A = np.hstack([x_data, np.ones([num, 1])])
             b = y_data
             try:
-                x = np.dot(np.linalg.inv( np.dot(A.T, A)), np.dot(A.T, b))
+                # x = np.dot(np.linalg.inv( np.dot(A.T, A)), np.dot(A.T, b))
+                x = np.linalg.solve(np.dot(A.T, A), np.dot(A.T, b))
             except np.linalg.LinAlgError as e:
                 x = np.dot(np.linalg.pinv(np.dot(A.T, A)), np.dot(A.T, b))
             
@@ -1423,7 +1532,8 @@ class Augmented_Dickey_Fuller_Test:
             A = np.hstack([x_data, np.ones([num, 1]), np.arange(1, num+1).reshape([num, 1])])
             b = y_data
             try:
-                x = np.dot(np.linalg.inv( np.dot(A.T, A)), np.dot(A.T, b))
+                # x = np.dot(np.linalg.inv( np.dot(A.T, A)), np.dot(A.T, b))
+                x = np.linalg.solve(np.dot(A.T, A), np.dot(A.T, b))
             except np.linalg.LinAlgError as e:
                 x = np.dot(np.linalg.pinv(np.dot(A.T, A)), np.dot(A.T, b))
             
@@ -1434,7 +1544,8 @@ class Augmented_Dickey_Fuller_Test:
             A = np.hstack([x_data, np.ones([num, 1]), np.arange(1, num+1).reshape([num, 1]), np.arange(1, num+1).reshape([num, 1]) ** 2])
             b = y_data
             try:
-                x = np.dot(np.linalg.inv( np.dot(A.T, A)), np.dot(A.T, b))
+                # x = np.dot(np.linalg.inv( np.dot(A.T, A)), np.dot(A.T, b))
+                x = np.linalg.solve(np.dot(A.T, A), np.dot(A.T, b))
             except np.linalg.LinAlgError as e:
                 x = np.dot(np.linalg.pinv(np.dot(A.T, A)), np.dot(A.T, b))
             
