@@ -37,6 +37,10 @@ def normal_distribution(x, loc=0, scale=1):
 def multivariate_normal_distrubution(x, mean, cov):
     return stats.multivariate_normal(mean=mean, cov=cov, allow_singular=True).pdf(x)
 
+# 軟判別閾値関数
+def soft_threshold(x, α):
+    return np.sign(x) * np.maximum(np.abs(x) - α, 0)
+
 class Update_Rafael:
     def __init__(self, alpha=0.001, beta1=0.9, beta2=0.999, beta3=0.9999, rate=1e-3):
         self.alpha = alpha
@@ -688,14 +692,14 @@ class Vector_Auto_Regressive:
 
 class Sparse_Vector_Auto_Regressive:
     def __init__(self,
-                 train_data,
-                 l1_norm:float=1.0,
-                 l2_norm:float=1.0,
-                 tol:float=1e-10,
-                 isStandardization:bool=True,
-                 max_iterate:int=100000,
-                 learning_rate:float=0.001,
-                 random_state=None) -> None:
+                 train_data,                         # 学習対象時系列データ
+                 l1_norm:float=1.0,                  # L1正則化パラメータ
+                 l2_norm:float=1.0,                  # L2正則化パラメータ
+                 tol:float=1e-10,                    # 許容誤差
+                 isStandardization:bool=True,        # 正規化処理の適用有無
+                 max_iterate:int=100000,             # 最大ループ回数
+                 learning_rate:float=0.001,          # 学習係数
+                 random_state=None) -> None:         # 乱数のシード値
         if type(train_data) is pd.core.frame.DataFrame:
             train_data = train_data.to_numpy()
         
@@ -787,9 +791,6 @@ class Sparse_Vector_Auto_Regressive:
         self.random              = buf[21]
         
         return True
-    
-    def soft_threshold(self, x, α):
-        return np.sign(x) * np.maximum(np.abs(x) - α, 0)
 
     def fit(self, lags:int=1, offset:int=0, solver:str='coordinate descent') -> bool:
         # caution!!!
@@ -846,6 +847,16 @@ class Sparse_Vector_Auto_Regressive:
 
             y_data = (y_data - self.y_standardization[0]) / self.y_standardization[1]
         
+        # 本ライブラリで実装されているアルゴリズムは以下の2点となる
+        # ・座標降下法アルゴリズム(CD: Coordinate Descent)の亜種
+        # ・メジャライザー最適化(ISTA: Iterative Shrinkage soft-Thresholding Algorithm)の亜種
+        # このアルゴリズムは両者共に同じ目的関数を最適化している
+        # しかし、実際に同一のパラメータでパラメータ探索をさせても同一の解は得られない
+        # これは、主にISTAのアルゴリズムが勾配降下法と同様の性質を有していることが原因である
+        # すなわち実行のたびに異なる解が導かれるのである
+        # 実際に両者の探索結果を比較してみると、非常に近いことが確認できる
+        # 探索解の品質を保証したいのであれば、座標降下法アルゴリズムを採用することを強く推奨する
+        
         self.lags = lags
         num, s    = x_data.shape
         if solver == "coordinate descent":
@@ -886,10 +897,10 @@ class Sparse_Vector_Auto_Regressive:
                 G[s, 0] = 0
                 C[s, :] = 0
                 
-            x_old = self.soft_threshold(T, self.l1_norm * np.abs(G))
+            x_old = soft_threshold(T, self.l1_norm * np.abs(G))
             for _ in range(0, self.max_iterate):
                 tmp   = T - self.l1_norm * np.dot(C, np.sign(x_old))
-                x_new = self.soft_threshold(tmp, self.l1_norm * np.abs(G))
+                x_new = soft_threshold(tmp, self.l1_norm * np.abs(G))
                     
                 if not np.all(np.sign(x_new) == np.sign(x_old)):
                     x_old = x_new
@@ -919,13 +930,18 @@ class Sparse_Vector_Auto_Regressive:
                 y_pred  = np.dot(x_data, self.alpha) + self.alpha0
                 
                 ΔLoss   = y_data - y_pred
-                Δalpha  = np.dot(x_data.T, ΔLoss) - self.l2_norm * self.alpha
-                Δalpha0 = np.sum(ΔLoss, axis=0)   - self.l2_norm * self.alpha0
+                Δalpha  = np.dot(x_data.T, ΔLoss)
+                Δalpha0 = np.sum(ΔLoss, axis=0)
                 
                 diff_alpha  = self.correct_alpha.update(Δalpha)
                 diff_alpha0 = self.correct_alpha0.update(Δalpha0)
+                rho         = diff_alpha  / (Δalpha  + 1e-16)
+                rho0        = diff_alpha0 / (Δalpha0 + 1e-16)
                 
-                self.alpha  = self.soft_threshold(self.alpha + diff_alpha, self.l1_norm * self.correct_alpha.alpha)
+                diff_alpha  = diff_alpha  - self.l2_norm * rho  * self.alpha
+                diff_alpha0 = diff_alpha0 - self.l2_norm * rho0 * self.alpha0
+                
+                self.alpha  = soft_threshold(self.alpha + diff_alpha, self.l1_norm * rho)
                 self.alpha0 = self.alpha0 + diff_alpha0
                 
                 update_diff = np.sqrt(np.sum(Δalpha ** 2) + np.sum(Δalpha0 ** 2))
@@ -943,8 +959,14 @@ class Sparse_Vector_Auto_Regressive:
         denominator    = num - 1
         
         self.learn_flg = True
-        y_pred         = self.predict(x_data)
-        diff           = y_pred - y_data
+        if self.isStandardization:
+            y_pred     = self.predict(x_data * self.x_standardization[1] + self.x_standardization[0])
+            diff       = y_data - (y_pred - self.y_standardization[0]) / self.y_standardization[1]
+        else:
+            y_pred     = self.predict(x_data)
+            diff       = y_data -  y_pred
+            
+        
         self.sigma     = np.dot(diff.T, diff) / denominator
         self.solver    = solver
         self.data_num  = num
@@ -1067,7 +1089,7 @@ class Sparse_Vector_Auto_Regressive:
 
     def select_order(self, maxlag=15, ic="aic", solver="coordinate descent", isVisible=False) -> int:
         if isVisible == True:
-            print(f"AR model | {ic}", flush=True)
+            print(f"SVAR model | {ic}", flush=True)
         
         nobs = len(self.train_data)
         if nobs <= maxlag:
@@ -1085,7 +1107,7 @@ class Sparse_Vector_Auto_Regressive:
                 model_param.append([rel, lag])
 
             if isVisible == True:
-                print(f"AR({lag}) | {rel}", flush=True)
+                print(f"SVAR({lag}) | {rel}", flush=True)
         
         res_rel, res_lag = np.finfo(np.float64).max, 0
         for elem in model_param:
