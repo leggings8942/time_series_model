@@ -37,6 +37,10 @@ def normal_distribution(x, loc=0, scale=1):
 def multivariate_normal_distrubution(x, mean, cov):
     return stats.multivariate_normal(mean=mean, cov=cov, allow_singular=True).pdf(x)
 
+# 軟判別閾値関数
+def soft_threshold(x, α):
+    return np.sign(x) * np.maximum(np.abs(x) - α, 0)
+
 class Update_Rafael:
     def __init__(self, alpha=0.001, beta1=0.9, beta2=0.999, beta3=0.9999, rate=1e-3):
         self.alpha = alpha
@@ -102,7 +106,7 @@ class Auto_Regressive:
         # OLS(Ordinary Learst Squares)推定量を計算する際に
         # 擬似逆行列(pinv関数)を使用している箇所が存在する
         # この処理は逆行列が存在しない場合(行列式が0の場合)に発火する
-        # しかし理論的には逆行列が存在しない時系列データの組み合わせは存在しない
+        # しかし理論的には逆行列が存在しない時系列データの組み合わせは極めて稀である(無視できる)
         # 入力された時系列データ自体にミスが存在する(0の定数列になっている等)可能性が高い
         # statsmodels.tsa.vector_ar.var_model.VARではこのような時系列データを入力として与えた場合には
         # エラーを出力するようになっている
@@ -135,7 +139,8 @@ class Auto_Regressive:
             A = np.hstack([x_data, np.ones([num, 1])])
             b = y_data
             try:
-                x = np.dot(np.linalg.inv( np.dot(A.T, A)), np.dot(A.T, b))
+                # x = np.dot(np.linalg.inv( np.dot(A.T, A)), np.dot(A.T, b))
+                x = np.linalg.solve(np.dot(A.T, A), np.dot(A.T, b))
             except np.linalg.LinAlgError as e:
                 x = np.dot(np.linalg.pinv(np.dot(A.T, A)), np.dot(A.T, b))
             
@@ -354,7 +359,7 @@ class Vector_Auto_Regressive:
         # OLS(Ordinary Learst Squares)推定量を計算する際に
         # 擬似逆行列(pinv関数)を使用している箇所が存在する
         # この処理は逆行列が存在しない場合(行列式が0の場合)に発火する
-        # しかし理論的には逆行列が存在しない時系列データの組み合わせは存在しない
+        # しかし理論的には逆行列が存在しない時系列データの組み合わせは極めて稀である(無視できる)
         # 入力された時系列データ自体にミスが存在する(0の定数列になっている等)可能性が高い
         # statsmodels.tsa.vector_ar.var_model.VARではこのような時系列データを入力として与えた場合には
         # エラーを出力するようになっている
@@ -378,7 +383,8 @@ class Vector_Auto_Regressive:
             A = np.hstack([x_data, np.ones([num, 1])])
             b = y_data
             try:
-                x = np.dot(np.linalg.inv( np.dot(A.T, A)), np.dot(A.T, b))
+                # x = np.dot(np.linalg.inv( np.dot(A.T, A)), np.dot(A.T, b))
+                x = np.linalg.solve(np.dot(A.T, A), np.dot(A.T, b))
             except np.linalg.LinAlgError as e:
                 x = np.dot(np.linalg.pinv(np.dot(A.T, A)), np.dot(A.T, b))
                 
@@ -682,7 +688,581 @@ class Vector_Auto_Regressive:
             fevd[idx, :, :] = fevd[idx, :, :] / np.sum(fevd[idx, :, :], axis=1).reshape([self.train_data.shape[1], 1])"""
         
         return fevd
+
+
+class Sparse_Vector_Auto_Regressive:
+    def __init__(self,
+                 train_data,                         # 学習対象時系列データ
+                 l1_norm:float=1.0,                  # L1正則化パラメータ
+                 l2_norm:float=1.0,                  # L2正則化パラメータ
+                 tol:float=1e-10,                    # 許容誤差
+                 isStandardization:bool=True,        # 正規化処理の適用有無
+                 max_iterate:int=100000,             # 最大ループ回数
+                 learning_rate:float=0.001,          # 学習係数
+                 random_state=None) -> None:         # 乱数のシード値
+        if type(train_data) is pd.core.frame.DataFrame:
+            train_data = train_data.to_numpy()
+        
+        if type(train_data) is list:
+            train_data = np.array(train_data)
+        
+        if train_data.ndim != 2:
+            print(f"train_data dims = {train_data.ndim}")
+            print("エラー：：次元数が一致しません。")
+            raise
+        
+        self.train_data          = train_data
+        self.lags                = 0
+        self.alpha               = np.zeros([1, 1])
+        self.alpha0              = np.zeros([1, 1])
+        self.sigma               = np.zeros([1, 1])
+        self.l1_norm             = l1_norm
+        self.l2_norm             = l2_norm
+        self.isStandardization   = isStandardization
+        self.x_standardization   = np.empty([2, 1])
+        self.y_standardization   = np.empty([2, 1])
+        self.tol                 = tol
+        self.solver              = ""
+        self.data_num            = 0
+        self.max_iterate         = max_iterate
+        self.correct_alpha       = Update_Rafael(alpha=learning_rate)
+        self.correct_alpha0      = Update_Rafael(alpha=learning_rate)
+        self.unbiased_dispersion = 0
+        self.dispersion          = 0
+        self.ma_inf              = np.zeros([1, 1])
+        self.learn_flg           = False
+
+        self.random_state = random_state
+        if random_state != None:
+            self.random = np.random
+            self.random.seed(seed=self.random_state)
+        else:
+            self.random = np.random
+            
+    def copy(self):
+        buf = []
+        buf = buf + [self.train_data.copy()]
+        buf = buf + [self.lags]
+        buf = buf + [self.alpha.copy()]
+        buf = buf + [self.alpha0.copy()]
+        buf = buf + [self.sigma.copy()]
+        buf = buf + [self.l1_norm]
+        buf = buf + [self.l2_norm]
+        buf = buf + [self.isStandardization]
+        buf = buf + [self.x_standardization]
+        buf = buf + [self.y_standardization]
+        buf = buf + [self.tol]
+        buf = buf + [self.solver]
+        buf = buf + [self.data_num]
+        buf = buf + [self.max_iterate]
+        buf = buf + [self.correct_alpha]
+        buf = buf + [self.correct_alpha0]
+        buf = buf + [self.unbiased_dispersion]
+        buf = buf + [self.dispersion]
+        buf = buf + [self.ma_inf.copy()]
+        buf = buf + [self.learn_flg]
+        buf = buf + [self.random_state]
+        buf = buf + [self.random]
+        
+        return buf
     
+    def restore(self, buf):
+        self.train_data          = buf[0]
+        self.lags                = buf[1]
+        self.alpha               = buf[2]
+        self.alpha0              = buf[3]
+        self.sigma               = buf[4]
+        self.l1_norm             = buf[5]
+        self.l2_norm             = buf[6]
+        self.isStandardization   = buf[7]
+        self.x_standardization   = buf[8]
+        self.y_standardization   = buf[9]
+        self.tol                 = buf[10]
+        self.solver              = buf[11]
+        self.data_num            = buf[12]
+        self.max_iterate         = buf[13]
+        self.correct_alpha       = buf[14]
+        self.correct_alpha0      = buf[15]
+        self.unbiased_dispersion = buf[16]
+        self.dispersion          = buf[17]
+        self.ma_inf              = buf[18]
+        self.learn_flg           = buf[19]
+        self.random_state        = buf[20]
+        self.random              = buf[21]
+        
+        return True
+
+    def fit(self, lags:int=1, offset:int=0, solver:str='coordinate descent') -> bool:
+        # caution!!!
+        # OLS(Ordinary Learst Squares)推定量を計算する際に
+        # 擬似逆行列(pinv関数)を使用している箇所が存在する
+        # この処理は逆行列が存在しない場合(行列式が0の場合)に発火する
+        # しかし理論的には逆行列が存在しない時系列データの組み合わせは極めて稀である(無視できる)
+        # 入力された時系列データ自体にミスが存在する(0の定数列になっている等)可能性が高い
+        # statsmodels.tsa.vector_ar.var_model.VARではこのような時系列データを入力として与えた場合には
+        # エラーを出力するようになっている
+        # 本ライブラリにおいてエラーの出力を行わないのは、近似的にでも処理結果が欲しいためである
+        # また、solverとしてISTAを使用する際にも注意が必要である
+        # ISTAは勾配降下法に似た特徴を有しており、対象の最適化パラメータのスケールに弱い
+        # 最適化対象のパラメータの解析解のスケールに依存して、必要な更新回数が多くなる
+        # スケールが極端に大きい場合などには事実上収束しないが、そもそも解析解のスケールを事前に知らない・気にしていない場合も多い
+        # そのような場合には、教師データ(X, Y)をそれぞれ正規化することで対処できる
+        # isStandardization=True に設定しておくことを強く推奨する
+        
+        if len(self.train_data) <= offset:
+            # データ数に対して、オフセットが大き過ぎる
+            self.learn_flg = False
+            return self.learn_flg
+        
+        tmp_train_data = self.train_data[offset:]
+        nobs           = len(tmp_train_data)
+        
+        if nobs <= lags:
+            # 学習対象データ数に対して、ラグが大き過ぎる
+            self.learn_flg = False
+            return self.learn_flg
+        
+        x_data         = np.array([tmp_train_data[t-lags : t][::-1].ravel() for t in range(lags, nobs)])
+        y_data         = tmp_train_data[lags:]
+        
+        # 正規化指定の有無
+        if self.isStandardization:
+            # x軸の正規化
+            _, s = x_data.shape
+            self.x_standardization    = np.empty([2, s])
+            self.x_standardization[0] = np.mean(x_data, axis=0)
+            self.x_standardization[1] = np.std( x_data, axis=0)
+
+            # 標準偏差が0の場合
+            zero_judge = (self.x_standardization[1] == 0)
+            self.x_standardization[0][zero_judge] = 0
+            self.x_standardization[1][zero_judge] = 1
+
+            x_data = (x_data - self.x_standardization[0]) / self.x_standardization[1]
+            
+            # y軸の正規化
+            _, s = y_data.shape
+            self.y_standardization    = np.empty([2, s])
+            self.y_standardization[0] = np.mean(y_data, axis=0)
+            self.y_standardization[1] = np.std( y_data, axis=0)
+
+            # 標準偏差が0の場合
+            zero_judge = (self.y_standardization[1] == 0)
+            self.y_standardization[0][zero_judge] = 0
+            self.y_standardization[1][zero_judge] = 1
+
+            y_data = (y_data - self.y_standardization[0]) / self.y_standardization[1]
+        
+        # 本ライブラリで実装されているアルゴリズムは以下の2点となる
+        # ・座標降下法アルゴリズム(CD: Coordinate Descent Algorithm)の亜種
+        # ・メジャライザー最適化(ISTA: Iterative Shrinkage soft-Thresholding Algorithm)の亜種
+        # これらのアルゴリズムは両者共に同じ目的関数を最適化している
+        # しかし、実際に同一のパラメータでパラメータ探索をさせても同一の解は得られない
+        # これは、主にISTAのアルゴリズムが勾配降下法と同様の性質を有していることが原因である
+        # すなわち実行のたびに異なる解が導かれるのである
+        # 実際に両者の探索結果を比較してみると、非常に近いことが確認できる
+        # 探索解の品質を保証したいのであれば、座標降下法アルゴリズムを採用することを強く推奨する
+        
+        self.lags = lags
+        num, s    = x_data.shape
+        if solver == "coordinate descent":
+            # ラッソ最適化(L1正則化)とリッジ最適化(L2正則化)を行なっている
+            # 注意点として、切片に対してはラッソ最適化を行わないことが挙げられる
+            # リッジ最適化は一般に係数を0にするためではなく、最適化対象のパラメータ全体を小さく保つために利用される
+            # 一方で、ラッソ最適化は係数を0にするために利用される手法である
+            # そのため、一般にはラッソ最適化を切片に対しては適用しない習慣がある
+            # このライブラリもこの習慣に従うことにする
+            # ラッソ最適化のアルゴリズムは自前のものであり、いわゆる座標降下法の亜種である
+            # 一般的な座標降下法は各変数に対して更新を行うため、計算量が比較的に大きい
+            # できる限り高速に処理を行いたかったので、このような実装になった
+            # このアルゴリズムと一般的な座標降下法との最大の差異は、逆行列を陽に計算するか・陰に計算するかの違いである
+            # 逆行列の計算を陽に計算することにより、かえって全体の計算量が減るように設計した
+            # これにより収束条件が、符号の一致のみに限定されたため比較的に早く収束することが期待できる
+            # このアルゴリズムの計算量は、O(ループ回数 × O(行列積))である
+            # N×M, M×Lの大きさを持つ行列A, Bを想定すると、行列積の計算量はO(NML)となる
+            # このSVARライブラリではそれぞれ、N=説明変数の数 M=説明変数の数 L=目的変数の数に対応している
+            # 一般的な座標降下法と比較して計算量オーダー O(ループ回数 × NML)は同じである
+            # しかしループ回数が少なくなること・定数項kの部分が小さいため、このアルゴリズムの方が高速に動作することを期待できる
+            # このアルゴリズムを利用するにあたって、学習対象データの正規化などの条件は特にない
+            # ただし、逆行列を必要とするため正則な学習データ行列であることが望ましい
+            
+            A = np.hstack([x_data, np.ones([num, 1])])
+            b = y_data
+            try:
+                L = np.linalg.inv( np.dot(A.T, A) + self.l2_norm * np.identity(s + 1))
+            except np.linalg.LinAlgError as e:
+                L = np.linalg.pinv(np.dot(A.T, A) + self.l2_norm * np.identity(s + 1))
+            finally:
+                R = np.dot(A.T, b)
+                T = np.dot(L, R)
+                D = np.diag(np.diag(L))
+                G = np.diag(L).reshape([s + 1, 1]).copy()
+                C = L - D
+                
+                # 切片に対して、L1正則化を適用しない
+                G[s, 0] = 0
+                C[s, :] = 0
+                
+            x_old = soft_threshold(T, self.l1_norm * np.abs(G))
+            for _ in range(0, self.max_iterate):
+                tmp   = T - self.l1_norm * np.dot(C, np.sign(x_old))
+                x_new = soft_threshold(tmp, self.l1_norm * np.abs(G))
+                    
+                if not np.all(np.sign(x_new) == np.sign(x_old)):
+                    x_old = x_new
+                else:
+                    break
+            x = x_new
+            self.alpha, self.alpha0 = x[0:s, :], x[s, :]
+            self.alpha0 = self.alpha0.reshape([1, x.shape[1]])
+        elif solver == "ISTA":
+            # ラッソ最適化(L1正則化)とリッジ最適化(L2正則化)を行なっている
+            # 注意点として、切片に対してはラッソ最適化を行わないことが挙げられる
+            # リッジ最適化は一般に係数を0にするためではなく、最適化対象のパラメータ全体を小さく保つために利用される
+            # 一方で、ラッソ最適化は係数を0にするために利用される手法である
+            # そのため、一般にはラッソ最適化を切片に対しては適用しない習慣がある
+            # このライブラリもこの習慣に従うことにする
+            # 以下のアルゴリズムは一般的なメジャライザー最適化(ISTA: Iterative Shrinkage soft-Thresholding Algorithm)の亜種である
+            # 基本的な理論こそ違いはあるものの最終的な更新式は勾配法そのものであり、勾配法における最適化アルゴリズムを適用できる
+            # そのため、最適化アルゴリズムの一つであるRafael(自前アルゴリズム)をこのアルゴリズムに適用することにした
+            # 学習係数が定数である場合に比べて高速であることが期待できる
+            # このアルゴリズムを使用する際の注意点として、教師データ(X, Y)がそれぞれ正規化されている必要があることが挙げられる
+            # 正規化されていない場合にはうまく収束しないくなる等、アルゴリズムが機能しなくなる可能性がある
+            # isStandardization=True に設定しておけば、問題ない
+            
+            self.alpha  = self.random.random([s, y_data.shape[1]])
+            self.alpha0 = self.random.random([1, y_data.shape[1]])
+            for _ in range(0, self.max_iterate):
+                y_pred  = np.dot(x_data, self.alpha) + self.alpha0
+                
+                ΔLoss   = y_data - y_pred
+                Δalpha  = np.dot(x_data.T, ΔLoss)
+                Δalpha0 = np.sum(ΔLoss, axis=0)
+                
+                diff_alpha  = self.correct_alpha.update(Δalpha)
+                diff_alpha0 = self.correct_alpha0.update(Δalpha0)
+                rho         = diff_alpha  / (Δalpha  + 1e-16)
+                rho0        = diff_alpha0 / (Δalpha0 + 1e-16)
+                
+                diff_alpha  = diff_alpha  - self.l2_norm * rho  * self.alpha
+                diff_alpha0 = diff_alpha0 - self.l2_norm * rho0 * self.alpha0
+                
+                # 切片に対して、L1正則化を適用しない
+                self.alpha  = soft_threshold(self.alpha + diff_alpha, self.l1_norm * rho)
+                self.alpha0 = self.alpha0 + diff_alpha0
+                
+                update_diff = np.sqrt(np.sum(Δalpha ** 2) + np.sum(Δalpha0 ** 2))
+                if update_diff <= self.tol:
+                    break
+        else:
+            raise
+        
+        # 不偏共分散行列を計算するためには、本来以下のような母数を採用する必要がある
+        # 母数 = 学習データ数 - 最適化対象変数の数
+        # しかし、このモデルでは”学習データ数 << 最適化対象変数の数”という状況下で利用されることを想定している
+        # この状況下では、母数が負の値になってしまうため採用することができない
+        # そのため、苦肉の策として 母数 = 学習データ数 - 1 を採用することにした。根拠は弱い。
+        # 今後、このような状況での最適な不偏共分散行列の求め方が判明したならば積極的に変更を加えることとする
+        denominator    = num - 1
+        
+        self.learn_flg = True
+        if self.isStandardization:
+            y_pred     = self.predict(x_data * self.x_standardization[1] + self.x_standardization[0])
+            diff       = y_data - (y_pred - self.y_standardization[0]) / self.y_standardization[1]
+        else:
+            y_pred     = self.predict(x_data)
+            diff       = y_data -  y_pred
+            
+        
+        self.sigma     = np.dot(diff.T, diff) / denominator
+        self.solver    = solver
+        self.data_num  = num
+        self.unbiased_dispersion = denominator
+        self.dispersion          = y_data.shape[0]
+
+        return self.learn_flg
+
+    def predict(self, test_data) -> np.ndarray:
+        if type(test_data) is pd.core.frame.DataFrame:
+            test_data = test_data.to_numpy()
+        
+        if type(test_data) is list:
+            test_data = np.array(test_data)
+        
+        if test_data.ndim != 2:
+            print(f"test_data dims = {test_data.ndim}")
+            print("エラー：：次元数が一致しません。")
+            raise
+        
+        if not self.learn_flg:
+            print(f"learn_flg = {self.learn_flg}")
+            print("エラー：：学習が完了していません。")
+            raise
+        
+        if self.isStandardization:
+            test_data = (test_data - self.x_standardization[0]) / self.x_standardization[1]
+        
+        y_pred = np.dot(test_data, self.alpha) + self.alpha0
+        if self.isStandardization:
+            y_pred = y_pred * self.y_standardization[1] + self.y_standardization[0]
+        
+        return y_pred
+    
+    def get_RSS(self) -> np.ndarray:
+        nobs   = len(self.train_data)
+        x_data = np.array([self.train_data[t-self.lags : t][::-1].ravel() for t in range(self.lags, nobs)])
+        y_data = self.train_data[self.lags:]
+        
+        y_pred = self.predict(x_data)
+
+        rss = np.square(y_data - y_pred)
+        rss = np.sum(rss, axis=0)
+        return rss
+    
+    def log_likelihood(self) -> np.float64:
+        # なぜか、対数尤度の計算に特殊な計算方法が採用されている
+        # statsmodels.tsa.vector_ar.var_model を参照のこと
+        # var_loglike関数内にて当該の記述を発見
+        # どうやらこれで対数尤度を計算できるらしい
+        # math:: -\left(\frac{T}{2}\right) \left(\ln\left|\Omega\right| - K\ln\left(2\pi\right) - K\right)
+        # この式が元になっているらしい
+        # さっぱり理解できないため、通常通りに計算することにする
+        
+        if not self.learn_flg:
+            print(f"learn_flg = {self.learn_flg}")
+            print("エラー：：学習が完了していません。")
+            raise
+        
+        nobs   = len(self.train_data)
+        x_data = np.array([self.train_data[t-self.lags : t][::-1].ravel() for t in range(self.lags, nobs)])
+        y_data = self.train_data[self.lags:]
+
+        num, _ = y_data.shape
+        y_pred = self.predict(x_data)
+
+        # 不偏推定共分散量を通常の推定共分散量に直す
+        tmp_sigma      = self.sigma * self.unbiased_dispersion / self.dispersion
+        
+        prob           = [multivariate_normal_distrubution(y_data[idx, :], y_pred[idx, :], tmp_sigma) for idx in range(0, num)]
+        prob           = np.array(prob).reshape([num, 1])
+        log_likelihood = np.sum(np.log(prob + 1e-32))
+
+        return log_likelihood
+    
+    def model_reliability(self, ic="aic") -> np.float64:
+        # statsmodels.tsa.vector_ar.var_model.VARResults を参照のこと
+        # info_criteria関数内にて当該の記述を発見
+        # 赤池情報基準やベイズ情報基準をはじめとした情報基準が特殊な形に変形されている
+        # これは、サンプル数を考慮した改良版らしい
+        # これを採用することとする
+        
+        if not self.learn_flg:
+            print(f"learn_flg = {self.learn_flg}")
+            print("エラー：：学習が完了していません。")
+            raise
+        
+        num = self.data_num
+        k   = self.alpha.size + self.alpha0.size
+        #log_likelihood = self.log_likelihood()
+        
+        # caution!!!
+        # 本ライブラリでは、データ数に対して最尤推定対象が多い場合にもできる限り処理を続けるように調整してある
+        # しかし、この場合に分散共分散行列の正定値性が保てなくなるという問題が発生する
+        # また、入力された時系列データ自体に誤りが存在する場合にも正定値性が保てなくなる
+        # 正定値行列でない場合には対数尤度の計算ができなくなる
+        # この問題の対策のために対数尤度の近似値を求める処理に変更していることに注意
+        # 参考URL:
+        # https://seetheworld1992.hatenablog.com/entry/2017/03/22/194932
+        
+        # 不偏推定共分散量を通常の推定共分散量に直す
+        tmp_sigma = self.sigma * self.unbiased_dispersion / self.dispersion
+        det_sigma = np.linalg.det(tmp_sigma)
+        det_sigma = det_sigma if det_sigma != 0 else 1e-16
+
+        inf = 0
+        if ic == "aic":
+            #inf = -2 * log_likelihood + 2 * k
+            inf = np.log(np.abs(det_sigma)) + 2 * k / num
+        elif ic == "bic":
+            #inf = -2 * log_likelihood + k * np.log(num)
+            inf = np.log(np.abs(det_sigma)) + k * np.log(num) / num
+        elif ic == "hqic":
+            #inf = -2 * log_likelihood + 2 * k * np.log(np.log(num))
+            inf = np.log(np.abs(det_sigma)) + 2 * k * np.log(np.log(num)) / num
+        else:
+            raise
+
+        return inf
+
+    def select_order(self, maxlag=15, ic="aic", solver="coordinate descent", isVisible=False) -> int:
+        if isVisible == True:
+            print(f"SVAR model | {ic}", flush=True)
+        
+        nobs = len(self.train_data)
+        if nobs <= maxlag:
+            maxlag = nobs - 1
+
+        model_param = []
+        for lag in range(1, maxlag + 1):
+            flg = self.fit(lags=lag, offset=maxlag - lag, solver=solver)
+            
+            if flg:
+                rel = self.model_reliability(ic=ic)
+                model_param.append([rel, lag])
+            else:
+                rel = np.finfo(np.float64).max
+                model_param.append([rel, lag])
+
+            if isVisible == True:
+                print(f"SVAR({lag}) | {rel}", flush=True)
+        
+        res_rel, res_lag = np.finfo(np.float64).max, 0
+        for elem in model_param:
+            tmp_rel, tmp_lag = elem
+            if res_rel > tmp_rel:
+                res_rel = tmp_rel
+                res_lag = tmp_lag
+        
+        res_lag = res_lag if res_lag != 0 else 1
+        self.fit(lags=res_lag, offset=0, solver=solver)
+        if not self.learn_flg:
+            print(f"learn_flg = {self.learn_flg}")
+            print("エラー：：学習が完了しませんでした。")
+            raise
+        
+        if isVisible == True:
+            print(f"selected orders | {res_lag}", flush=True)
+
+        return self.lags
+    
+    def stat_inf(self) -> dict:
+        info = {}
+        if self.lags * self.alpha.shape[1] != self.alpha.shape[0]:
+            print("データの次元が一致しません")
+            print("lags = ", self.lags)
+            print("alpha.shape = ", self.alpha.shape)
+            print("時系列データ数 = ", self.alpha.shape[1])
+            raise
+
+        tmp_alpha = []
+        for lag in range(0, self.lags):
+            tmp_alpha.append(self.alpha[self.alpha.shape[1] * lag:self.alpha.shape[1] * (lag + 1), :].tolist())
+
+        tmp_alpha = np.array(tmp_alpha)
+        info["mean"] = np.dot(np.linalg.inv(np.identity(self.alpha.shape[1]) - np.sum(tmp_alpha, axis=0)), self.alpha0.T)
+
+        return info
+    
+    def test_causality(self, causing=0, caused=1):
+        backup = self.copy()
+        tmp_train_data = backup[0]
+        tmp_lags       = backup[1]
+        tmp_alpha      = backup[2]
+        tmp_solver     = backup[11]
+        tmp_data_num   = backup[12]
+
+        self.fit(lags=tmp_lags, solver=tmp_solver)
+        rss1 = self.get_RSS()[caused]
+
+        caused = caused - 1 if causing < caused else caused
+        self.train_data = np.delete(tmp_train_data, causing, axis=1)
+        self.fit(lags=tmp_lags, solver=tmp_solver)
+        rss0 = self.get_RSS()[caused]
+
+        num    = tmp_train_data.shape[1]
+        Fvalue = (rss0 - rss1)/num / (rss1 / (tmp_data_num - tmp_alpha.shape[0] - 1))
+        pvalue = stats.chi2.sf(x=Fvalue*num, df=num)
+
+        self.restore(backup)
+
+        return Fvalue*num, pvalue
+    
+    def ma_replace(self, max=10):
+        ma_inf = np.zeros([max + 1, self.train_data.shape[1], self.train_data.shape[1]])
+        ma_inf[0, :, :] = np.identity(self.train_data.shape[1])
+        
+        x_data = ma_inf[0, :, :]
+        for _ in range(1, self.lags):
+            x_data = np.vstack([x_data, np.zeros([self.train_data.shape[1], self.train_data.shape[1]])])
+
+        for idx in range(1, max + 1):
+            ma_inf[idx, :, :] = np.dot(self.alpha.T, x_data)
+            x_data = np.vstack([ma_inf[idx, :, :], x_data[:-self.train_data.shape[1], :]])
+        
+        self.ma_inf = ma_inf
+        return self.ma_inf
+
+    def irf(self, period=30, orth=False, isStdDevShock=True):
+        if not self.learn_flg:
+            print(f"learn_flg = {self.learn_flg}")
+            print("エラー：：学習が完了していません。")
+            raise
+
+        if orth == True:
+            A, D = modified_cholesky(self.sigma)
+
+            irf = np.zeros([period + 1, self.train_data.shape[1], self.train_data.shape[1]])
+            if isStdDevShock:
+                irf[0, :, :] = np.dot(A, np.sqrt(D))
+            else:
+                irf[0, :, :] = np.dot(A, np.identity(self.train_data.shape[1]))
+
+            x_data = irf[0, :, :]
+            for _ in range(1, self.lags):
+                x_data = np.vstack([x_data, np.zeros([self.train_data.shape[1], self.train_data.shape[1]])])
+            
+            for idx in range(1, period + 1):
+                #tmp = self.alpha.reshape(self.lags, self.train_data.shape[1], self.train_data.shape[1])
+                #tmp = tmp.swapaxes(1,2).reshape(self.lags * self.train_data.shape[1], self.train_data.shape[1])
+                #irf[idx, :, :] = np.dot(x_data, tmp)
+                irf[idx, :, :] = np.dot(self.alpha.T, x_data)
+                x_data = np.vstack([irf[idx, :, :], x_data[:-self.train_data.shape[1], :]])
+            """irf_data = self.irf(period, orth=False)
+            L = np.linalg.cholesky(self.sigma)
+            irf = np.array([np.dot(coefs, L) for coefs in irf_data])"""
+
+        else:
+            irf = self.ma_replace(period)
+
+        return irf
+    
+    def fevd(self, period=30):
+        if not self.learn_flg:
+            print(f"learn_flg = {self.learn_flg}")
+            print("エラー：：学習が完了していません。")
+            raise
+        
+        # 不偏推定共分散量を通常の推定共分散量に直す
+        tmp_sigma = self.sigma * self.unbiased_dispersion / self.dispersion
+        A, D = modified_cholesky(tmp_sigma)
+        
+        fevd = np.zeros([period + 1, self.train_data.shape[1], self.train_data.shape[1]])
+        fevd[0, :, :] = A
+        
+        x_data = fevd[0, :, :]
+        for _ in range(1, self.lags):
+            x_data = np.vstack([x_data, np.zeros([self.train_data.shape[1], self.train_data.shape[1]])])
+        
+        fevd[0, :, :] = fevd[0, :, :] ** 2
+        for idx in range(1, period + 1):
+            fevd[idx, :, :] = np.dot(self.alpha.T, x_data)
+            x_data = np.vstack([fevd[idx, :, :], x_data[:-self.train_data.shape[1], :]])
+            
+            fevd[idx, :, :] = fevd[idx, :, :] ** 2
+        
+        fevd = fevd.cumsum(axis=0)
+        for idx in range(0, period + 1):
+            fevd[idx, :, :] = np.dot(fevd[idx, :, :], D)
+        
+        for idx in range(0, period + 1):
+            fevd[idx, :, :] = fevd[idx, :, :] / np.sum(fevd[idx, :, :], axis=1).reshape([self.train_data.shape[1], 1])
+        """fevd = self.irf(period=period, orth=True)
+        fevd = (fevd ** 2).cumsum(axis=0)
+        for idx in range(0, period + 1):
+            fevd[idx, :, :] = fevd[idx, :, :] / np.sum(fevd[idx, :, :], axis=1).reshape([self.train_data.shape[1], 1])"""
+        
+        return fevd
+
 
 class Dickey_Fuller_Test:
     def __init__(self, test_data, regression="c") -> None:
@@ -718,7 +1298,7 @@ class Dickey_Fuller_Test:
         # OLS(Ordinary Learst Squares)推定量を計算する際に
         # 擬似逆行列(pinv関数)を使用している箇所が存在する
         # この処理は逆行列が存在しない場合(行列式が0の場合)に発火する
-        # しかし理論的には逆行列が存在しない時系列データの組み合わせは存在しない
+        # しかし理論的には逆行列が存在しない時系列データの組み合わせは極めて稀である(無視できる)
         # 入力された時系列データ自体にミスが存在する(0の定数列になっている等)可能性が高い
         # statsmodels.tsa.vector_ar.var_model.VARではこのような時系列データを入力として与えた場合には
         # エラーを出力するようになっている
@@ -740,7 +1320,8 @@ class Dickey_Fuller_Test:
             A = x_data
             b = y_data
             try:
-                x = np.dot(np.linalg.inv( np.dot(A.T, A)), np.dot(A.T, b))
+                # x = np.dot(np.linalg.inv( np.dot(A.T, A)), np.dot(A.T, b))
+                x = np.linalg.solve(np.dot(A.T, A), np.dot(A.T, b))
             except np.linalg.LinAlgError as e:
                 x = np.dot(np.linalg.pinv(np.dot(A.T, A)), np.dot(A.T, b))
             
@@ -751,7 +1332,8 @@ class Dickey_Fuller_Test:
             A = np.hstack([x_data, np.ones([num, 1])])
             b = y_data
             try:
-                x = np.dot(np.linalg.inv( np.dot(A.T, A)), np.dot(A.T, b))
+                # x = np.dot(np.linalg.inv( np.dot(A.T, A)), np.dot(A.T, b))
+                x = np.linalg.solve(np.dot(A.T, A), np.dot(A.T, b))
             except np.linalg.LinAlgError as e:
                 x = np.dot(np.linalg.pinv(np.dot(A.T, A)), np.dot(A.T, b))
             
@@ -762,7 +1344,8 @@ class Dickey_Fuller_Test:
             A = np.hstack([x_data, np.ones([num, 1]), np.arange(1, num+1).reshape([num, 1])])
             b = y_data
             try:
-                x = np.dot(np.linalg.inv( np.dot(A.T, A)), np.dot(A.T, b))
+                # x = np.dot(np.linalg.inv( np.dot(A.T, A)), np.dot(A.T, b))
+                x = np.linalg.solve(np.dot(A.T, A), np.dot(A.T, b))
             except np.linalg.LinAlgError as e:
                 x = np.dot(np.linalg.pinv(np.dot(A.T, A)), np.dot(A.T, b))
             
@@ -773,7 +1356,8 @@ class Dickey_Fuller_Test:
             A = np.hstack([x_data, np.ones([num, 1]), np.arange(1, num+1).reshape([num, 1]), np.arange(1, num+1).reshape([num, 1]) ** 2])
             b = y_data
             try:
-                x = np.dot(np.linalg.inv( np.dot(A.T, A)), np.dot(A.T, b))
+                # x = np.dot(np.linalg.inv( np.dot(A.T, A)), np.dot(A.T, b))
+                x = np.linalg.solve(np.dot(A.T, A), np.dot(A.T, b))
             except np.linalg.LinAlgError as e:
                 x = np.dot(np.linalg.pinv(np.dot(A.T, A)), np.dot(A.T, b))
             
@@ -927,7 +1511,7 @@ class Augmented_Dickey_Fuller_Test:
         # OLS(Ordinary Learst Squares)推定量を計算する際に
         # 擬似逆行列(pinv関数)を使用している箇所が存在する
         # この処理は逆行列が存在しない場合(行列式が0の場合)に発火する
-        # しかし理論的には逆行列が存在しない時系列データの組み合わせは存在しない
+        # しかし理論的には逆行列が存在しない時系列データの組み合わせは極めて稀である(無視できる)
         # 入力された時系列データ自体にミスが存在する(0の定数列になっている等)可能性が高い
         # statsmodels.tsa.vector_ar.var_model.VARではこのような時系列データを入力として与えた場合には
         # エラーを出力するようになっている
@@ -953,7 +1537,8 @@ class Augmented_Dickey_Fuller_Test:
             A = x_data
             b = y_data
             try:
-                x = np.dot(np.linalg.inv( np.dot(A.T, A)), np.dot(A.T, b))
+                # x = np.dot(np.linalg.inv( np.dot(A.T, A)), np.dot(A.T, b))
+                x = np.linalg.solve(np.dot(A.T, A), np.dot(A.T, b))
             except np.linalg.LinAlgError as e:
                 x = np.dot(np.linalg.pinv(np.dot(A.T, A)), np.dot(A.T, b))
             
@@ -964,7 +1549,8 @@ class Augmented_Dickey_Fuller_Test:
             A = np.hstack([x_data, np.ones([num, 1])])
             b = y_data
             try:
-                x = np.dot(np.linalg.inv( np.dot(A.T, A)), np.dot(A.T, b))
+                # x = np.dot(np.linalg.inv( np.dot(A.T, A)), np.dot(A.T, b))
+                x = np.linalg.solve(np.dot(A.T, A), np.dot(A.T, b))
             except np.linalg.LinAlgError as e:
                 x = np.dot(np.linalg.pinv(np.dot(A.T, A)), np.dot(A.T, b))
             
@@ -975,7 +1561,8 @@ class Augmented_Dickey_Fuller_Test:
             A = np.hstack([x_data, np.ones([num, 1]), np.arange(1, num+1).reshape([num, 1])])
             b = y_data
             try:
-                x = np.dot(np.linalg.inv( np.dot(A.T, A)), np.dot(A.T, b))
+                # x = np.dot(np.linalg.inv( np.dot(A.T, A)), np.dot(A.T, b))
+                x = np.linalg.solve(np.dot(A.T, A), np.dot(A.T, b))
             except np.linalg.LinAlgError as e:
                 x = np.dot(np.linalg.pinv(np.dot(A.T, A)), np.dot(A.T, b))
             
@@ -986,7 +1573,8 @@ class Augmented_Dickey_Fuller_Test:
             A = np.hstack([x_data, np.ones([num, 1]), np.arange(1, num+1).reshape([num, 1]), np.arange(1, num+1).reshape([num, 1]) ** 2])
             b = y_data
             try:
-                x = np.dot(np.linalg.inv( np.dot(A.T, A)), np.dot(A.T, b))
+                # x = np.dot(np.linalg.inv( np.dot(A.T, A)), np.dot(A.T, b))
+                x = np.linalg.solve(np.dot(A.T, A), np.dot(A.T, b))
             except np.linalg.LinAlgError as e:
                 x = np.dot(np.linalg.pinv(np.dot(A.T, A)), np.dot(A.T, b))
             
