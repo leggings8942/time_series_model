@@ -802,6 +802,12 @@ class Sparse_Vector_Auto_Regressive:
         # statsmodels.tsa.vector_ar.var_model.VARではこのような時系列データを入力として与えた場合には
         # エラーを出力するようになっている
         # 本ライブラリにおいてエラーの出力を行わないのは、近似的にでも処理結果が欲しいためである
+        # また、solverとしてISTAを使用する際にも注意が必要である
+        # ISTAは勾配降下法に似た特徴を有しており、対象の最適化パラメータのスケールに弱い
+        # 最適化対象のパラメータの解析解のスケールに依存して、必要な更新回数が多くなる
+        # スケールが極端に大きい場合などには事実上収束しないが、そもそも解析解のスケールを事前に知らない・気にしていない場合も多い
+        # そのような場合には、教師データ(X, Y)をそれぞれ正規化することで対処できる
+        # isStandardization=True に設定しておくことを強く推奨する
         
         if len(self.train_data) <= offset:
             # データ数に対して、オフセットが大き過ぎる
@@ -848,9 +854,9 @@ class Sparse_Vector_Auto_Regressive:
             y_data = (y_data - self.y_standardization[0]) / self.y_standardization[1]
         
         # 本ライブラリで実装されているアルゴリズムは以下の2点となる
-        # ・座標降下法アルゴリズム(CD: Coordinate Descent)の亜種
+        # ・座標降下法アルゴリズム(CD: Coordinate Descent Algorithm)の亜種
         # ・メジャライザー最適化(ISTA: Iterative Shrinkage soft-Thresholding Algorithm)の亜種
-        # このアルゴリズムは両者共に同じ目的関数を最適化している
+        # これらのアルゴリズムは両者共に同じ目的関数を最適化している
         # しかし、実際に同一のパラメータでパラメータ探索をさせても同一の解は得られない
         # これは、主にISTAのアルゴリズムが勾配降下法と同様の性質を有していることが原因である
         # すなわち実行のたびに異なる解が導かれるのである
@@ -876,7 +882,7 @@ class Sparse_Vector_Auto_Regressive:
             # N×M, M×Lの大きさを持つ行列A, Bを想定すると、行列積の計算量はO(NML)となる
             # このSVARライブラリではそれぞれ、N=説明変数の数 M=説明変数の数 L=目的変数の数に対応している
             # 一般的な座標降下法と比較して計算量オーダー O(ループ回数 × NML)は同じである
-            # しかしループ回数が少なくなること・定数項kの部分が小さいことが期待できるため、このアルゴリズムの方が高速に動作することを期待できる
+            # しかしループ回数が少なくなること・定数項kの部分が小さいため、このアルゴリズムの方が高速に動作することを期待できる
             # このアルゴリズムを利用するにあたって、学習対象データの正規化などの条件は特にない
             # ただし、逆行列を必要とするため正則な学習データ行列であることが望ましい
             
@@ -893,7 +899,7 @@ class Sparse_Vector_Auto_Regressive:
                 G = np.diag(L).reshape([s + 1, 1]).copy()
                 C = L - D
                 
-                # 切片に対して、L1正則を適用しない
+                # 切片に対して、L1正則化を適用しない
                 G[s, 0] = 0
                 C[s, :] = 0
                 
@@ -941,6 +947,7 @@ class Sparse_Vector_Auto_Regressive:
                 diff_alpha  = diff_alpha  - self.l2_norm * rho  * self.alpha
                 diff_alpha0 = diff_alpha0 - self.l2_norm * rho0 * self.alpha0
                 
+                # 切片に対して、L1正則化を適用しない
                 self.alpha  = soft_threshold(self.alpha + diff_alpha, self.l1_norm * rho)
                 self.alpha0 = self.alpha0 + diff_alpha0
                 
