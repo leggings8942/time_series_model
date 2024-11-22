@@ -856,7 +856,7 @@ class Sparse_Vector_Auto_Regressive:
         
         # 本ライブラリで実装されているアルゴリズムは以下の2点となる
         # ・座標降下法アルゴリズム(CD: Coordinate Descent Algorithm)
-        # ・メジャライザー最適化(ISTA: Iterative Shrinkage soft-Thresholding Algorithm)
+        # ・メジャライザー最適化(ISTA: Iterative Shrinkage soft-Thresholding Algorithm)の亜種
         # これらのアルゴリズムは両者共に同じ目的関数を最適化している
         # しかし、実際に同一のパラメータでパラメータ探索をさせても同一の解は得られない
         # これは、主にISTAのアルゴリズムが勾配降下法と同様の性質を有していることが原因である
