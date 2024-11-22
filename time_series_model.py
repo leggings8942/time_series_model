@@ -2,6 +2,7 @@ import numpy as np
 import scipy as sp
 import pandas as pd
 from scipy import stats
+from sklearn.linear_model import ElasticNet
 
 def modified_cholesky(x):
     if type(x) is list:
@@ -693,12 +694,12 @@ class Vector_Auto_Regressive:
 class Sparse_Vector_Auto_Regressive:
     def __init__(self,
                  train_data,                         # 学習対象時系列データ
-                 l1_norm:float=1.0,                  # L1正則化パラメータ
-                 l2_norm:float=1.0,                  # L2正則化パラメータ
-                 tol:float=1e-10,                    # 許容誤差
+                 norm_α:float=1.0,                   # L1・L2正則化パラメータの強さ
+                 l1_ratio:float=0.01,                  # L1・L2正則化の強さ配分・比率
+                 tol:float=1e-6,                     # 許容誤差
                  isStandardization:bool=True,        # 正規化処理の適用有無
-                 max_iterate:int=100000,             # 最大ループ回数
-                 learning_rate:float=0.001,          # 学習係数
+                 max_iterate:int=1000000,            # 最大ループ回数
+                 learning_rate:float=0.0001,         # 学習係数
                  random_state=None) -> None:         # 乱数のシード値
         if type(train_data) is pd.core.frame.DataFrame:
             train_data = train_data.to_numpy()
@@ -716,8 +717,8 @@ class Sparse_Vector_Auto_Regressive:
         self.alpha               = np.zeros([1, 1])
         self.alpha0              = np.zeros([1, 1])
         self.sigma               = np.zeros([1, 1])
-        self.l1_norm             = l1_norm
-        self.l2_norm             = l2_norm
+        self.norm_α              = np.abs(norm_α)
+        self.l1_ratio            = np.where(l1_ratio < 0, 0, np.where(l1_ratio > 1, 1, l1_ratio))
         self.isStandardization   = isStandardization
         self.x_standardization   = np.empty([2, 1])
         self.y_standardization   = np.empty([2, 1])
@@ -746,8 +747,8 @@ class Sparse_Vector_Auto_Regressive:
         buf = buf + [self.alpha.copy()]
         buf = buf + [self.alpha0.copy()]
         buf = buf + [self.sigma.copy()]
-        buf = buf + [self.l1_norm]
-        buf = buf + [self.l2_norm]
+        buf = buf + [self.norm_α]
+        buf = buf + [self.l1_ratio]
         buf = buf + [self.isStandardization]
         buf = buf + [self.x_standardization]
         buf = buf + [self.y_standardization]
@@ -772,8 +773,8 @@ class Sparse_Vector_Auto_Regressive:
         self.alpha               = buf[2]
         self.alpha0              = buf[3]
         self.sigma               = buf[4]
-        self.l1_norm             = buf[5]
-        self.l2_norm             = buf[6]
+        self.norm_α              = buf[5]
+        self.l1_ratio            = buf[6]
         self.isStandardization   = buf[7]
         self.x_standardization   = buf[8]
         self.y_standardization   = buf[9]
@@ -792,7 +793,7 @@ class Sparse_Vector_Auto_Regressive:
         
         return True
 
-    def fit(self, lags:int=1, offset:int=0, solver:str='coordinate descent') -> bool:
+    def fit(self, lags:int=1, offset:int=0, solver:str='external library') -> bool:
         # caution!!!
         # OLS(Ordinary Learst Squares)推定量を計算する際に
         # 擬似逆行列(pinv関数)を使用している箇所が存在する
@@ -822,8 +823,8 @@ class Sparse_Vector_Auto_Regressive:
             self.learn_flg = False
             return self.learn_flg
         
-        x_data         = np.array([tmp_train_data[t-lags : t][::-1].ravel() for t in range(lags, nobs)])
-        y_data         = tmp_train_data[lags:]
+        x_data = np.array([tmp_train_data[t-lags : t][::-1].ravel() for t in range(lags, nobs)])
+        y_data = tmp_train_data[lags:]
         
         # 正規化指定の有無
         if self.isStandardization:
@@ -854,64 +855,64 @@ class Sparse_Vector_Auto_Regressive:
             y_data = (y_data - self.y_standardization[0]) / self.y_standardization[1]
         
         # 本ライブラリで実装されているアルゴリズムは以下の2点となる
-        # ・座標降下法アルゴリズム(CD: Coordinate Descent Algorithm)の亜種
-        # ・メジャライザー最適化(ISTA: Iterative Shrinkage soft-Thresholding Algorithm)の亜種
+        # ・座標降下法アルゴリズム(CD: Coordinate Descent Algorithm)
+        # ・メジャライザー最適化(ISTA: Iterative Shrinkage soft-Thresholding Algorithm)
         # これらのアルゴリズムは両者共に同じ目的関数を最適化している
         # しかし、実際に同一のパラメータでパラメータ探索をさせても同一の解は得られない
         # これは、主にISTAのアルゴリズムが勾配降下法と同様の性質を有していることが原因である
-        # すなわち実行のたびに異なる解が導かれるのである
-        # 実際に両者の探索結果を比較してみると、非常に近いことが確認できる
-        # 探索解の品質を保証したいのであれば、座標降下法アルゴリズムを採用することを強く推奨する
+        # すなわち実行のたびに異なる解が導かれるかつ極所最適解に落ち着くことがある
+        # また、外部ライブラリとしてsklearn.linear_model.ElasticNetを利用することもできる
+        # この外部ライブラリは内部で座標降下法で探索を行っている点で本ライブラリと同等である
+        # 一方で、この外部ライブラリはC言語(Cython)を利用してチューニングが行われている
+        # また広く公開され、多くの人に利用されているライブラリでもあるため速度・品質ともにレベルが高い
+        # 探索解の品質を保証したいのであれば、外部ライブラリの利用を強く推奨する
+        # 参考までに各オプションごとの実行速度は以下の通り
+        # external library  >>  coordinate descent  >>  ISTA
         
         self.lags = lags
         num, s    = x_data.shape
-        if solver == "coordinate descent":
+        if   solver == "external library":
+            model = ElasticNet(alpha=self.norm_α, l1_ratio=self.l1_ratio.tolist(), max_iter=self.max_iterate, tol=self.tol)
+            model.fit(x_data, y_data)
+            
+            self.alpha, self.alpha0 = model.coef_.T, model.intercept_
+            self.alpha0 = self.alpha0.reshape([1, y_data.shape[1]])
+        elif solver == "coordinate descent":
             # ラッソ最適化(L1正則化)とリッジ最適化(L2正則化)を行なっている
             # 注意点として、切片に対してはラッソ最適化を行わないことが挙げられる
             # リッジ最適化は一般に係数を0にするためではなく、最適化対象のパラメータ全体を小さく保つために利用される
             # 一方で、ラッソ最適化は係数を0にするために利用される手法である
             # そのため、一般にはラッソ最適化を切片に対しては適用しない習慣がある
             # このライブラリもこの習慣に従うことにする
-            # ラッソ最適化のアルゴリズムは自前のものであり、いわゆる座標降下法の亜種である
-            # 一般的な座標降下法は各変数に対して更新を行うため、計算量が比較的に大きい
-            # できる限り高速に処理を行いたかったので、このような実装になった
-            # このアルゴリズムと一般的な座標降下法との最大の差異は、逆行列を陽に計算するか・陰に計算するかの違いである
-            # 逆行列の計算を陽に計算することにより、かえって全体の計算量が減るように設計した
-            # これにより収束条件が、符号の一致のみに限定されたため比較的に早く収束することが期待できる
-            # このアルゴリズムの計算量は、O(ループ回数 × O(行列積))である
-            # N×M, M×Lの大きさを持つ行列A, Bを想定すると、行列積の計算量はO(NML)となる
-            # このSVARライブラリではそれぞれ、N=説明変数の数 M=説明変数の数 L=目的変数の数に対応している
-            # 一般的な座標降下法と比較して計算量オーダー O(ループ回数 × NML)は同じである
-            # しかしループ回数が少なくなること・定数項kの部分が小さいため、このアルゴリズムの方が高速に動作することを期待できる
-            # このアルゴリズムを利用するにあたって、学習対象データの正規化などの条件は特にない
-            # ただし、逆行列を必要とするため正則な学習データ行列であることが望ましい
+            # 実装アルゴリズムは座標降下法である
             
-            A = np.hstack([x_data, np.ones([num, 1])])
-            b = y_data
-            try:
-                L = np.linalg.inv( np.dot(A.T, A) + self.l2_norm * np.identity(s + 1))
-            except np.linalg.LinAlgError as e:
-                L = np.linalg.pinv(np.dot(A.T, A) + self.l2_norm * np.identity(s + 1))
-            finally:
-                R = np.dot(A.T, b)
-                T = np.dot(L, R)
-                D = np.diag(np.diag(L))
-                G = np.diag(L).reshape([s + 1, 1]).copy()
-                C = L - D
+            l1_norm = self.norm_α * self.l1_ratio       * num
+            l2_norm = self.norm_α * (1 - self.l1_ratio) * num
+            A       = np.hstack([x_data, np.ones([num, 1])])
+            b       = y_data
+            
+            x_new = np.zeros([s + 1, b.shape[1]])
+            for idx1 in range(0, self.max_iterate):
+                x_old = x_new.copy()
+                for idx3 in range(0, s + 1):
+                    x_new[idx3, :] = 0
+                    U = np.sum((b - np.dot(A, x_new)) * A[:, idx3].reshape([num, 1]), axis=0)
+                    D = (A[:, idx3] ** 2).sum()
+                    if idx3 != s:
+                        x_new[idx3, :] = soft_threshold(U, l1_norm) / (D + l2_norm)
+                    else:
+                        x_new[idx3, :] = U / (D + l2_norm)
                 
-                # 切片に対して、L1正則化を適用しない
-                G[s, 0] = 0
-                C[s, :] = 0
+                ΔDiff = np.sqrt(np.sum((x_new - x_old) ** 2))
+                # if idx1 % 100 == 0:
+                #     mse = np.sum(ΔDiff ** 2) / num
+                #     print(f"ite:{idx1+1}  mse:{mse}  ΔDiff:{ΔDiff}")
                 
-            x_old = soft_threshold(T, self.l1_norm * np.abs(G))
-            for _ in range(0, self.max_iterate):
-                tmp   = T - self.l1_norm * np.dot(C, np.sign(x_old))
-                x_new = soft_threshold(tmp, self.l1_norm * np.abs(G))
-                    
-                if not np.all(np.sign(x_new) == np.sign(x_old)):
-                    x_old = x_new
+                if not ΔDiff <= self.tol:
+                    x_old = x_new.copy()
                 else:
                     break
+            
             x = x_new
             self.alpha, self.alpha0 = x[0:s, :], x[s, :]
             self.alpha0 = self.alpha0.reshape([1, x.shape[1]])
@@ -922,38 +923,39 @@ class Sparse_Vector_Auto_Regressive:
             # 一方で、ラッソ最適化は係数を0にするために利用される手法である
             # そのため、一般にはラッソ最適化を切片に対しては適用しない習慣がある
             # このライブラリもこの習慣に従うことにする
-            # 以下のアルゴリズムは一般的なメジャライザー最適化(ISTA: Iterative Shrinkage soft-Thresholding Algorithm)の亜種である
-            # 基本的な理論こそ違いはあるものの最終的な更新式は勾配法そのものであり、勾配法における最適化アルゴリズムを適用できる
-            # そのため、最適化アルゴリズムの一つであるRafael(自前アルゴリズム)をこのアルゴリズムに適用することにした
-            # 学習係数が定数である場合に比べて高速であることが期待できる
-            # このアルゴリズムを使用する際の注意点として、教師データ(X, Y)がそれぞれ正規化されている必要があることが挙げられる
+            # 実装アルゴリズムは一般的なメジャライザー最適化(ISTA: Iterative Shrinkage soft-Thresholding Algorithm)である
+            # このアルゴリズムを利用する際の注意点として、以下の２つが挙げられる
+            # ・教師データ(X, Y)がそれぞれ正規化されている必要があること
+            # ・大域的最適解を探索できるとは限らないこと
             # 正規化されていない場合にはうまく収束しないくなる等、アルゴリズムが機能しなくなる可能性がある
             # isStandardization=True に設定しておけば、問題ない
             
+            l1_norm     = self.norm_α * self.l1_ratio       * num
+            l2_norm     = self.norm_α * (1 - self.l1_ratio) * num
             self.alpha  = self.random.random([s, y_data.shape[1]])
             self.alpha0 = self.random.random([1, y_data.shape[1]])
-            for _ in range(0, self.max_iterate):
+            for idx in range(0, self.max_iterate):
                 y_pred  = np.dot(x_data, self.alpha) + self.alpha0
                 
                 ΔLoss   = y_data - y_pred
-                Δalpha  = np.dot(x_data.T, ΔLoss)
-                Δalpha0 = np.sum(ΔLoss, axis=0)
+                Δalpha  = np.dot(x_data.T, ΔLoss) - l2_norm * self.alpha
+                Δalpha0 = np.sum(ΔLoss, axis=0)   - l2_norm * self.alpha0
                 
                 diff_alpha  = self.correct_alpha.update(Δalpha)
                 diff_alpha0 = self.correct_alpha0.update(Δalpha0)
-                rho         = diff_alpha  / (Δalpha  + 1e-16)
-                rho0        = diff_alpha0 / (Δalpha0 + 1e-16)
-                
-                diff_alpha  = diff_alpha  - self.l2_norm * rho  * self.alpha
-                diff_alpha0 = diff_alpha0 - self.l2_norm * rho0 * self.alpha0
+                rho         = diff_alpha / (Δalpha + 1e-32)
                 
                 # 切片に対して、L1正則化を適用しない
-                self.alpha  = soft_threshold(self.alpha + diff_alpha, self.l1_norm * rho)
+                self.alpha  = soft_threshold(self.alpha + diff_alpha, l1_norm * rho)
                 self.alpha0 = self.alpha0 + diff_alpha0
                 
                 update_diff = np.sqrt(np.sum(Δalpha ** 2) + np.sum(Δalpha0 ** 2))
                 if update_diff <= self.tol:
                     break
+                
+                # if idx % 100 == 0:
+                #     mse = np.sum(ΔLoss ** 2) / num
+                #     print(f"ite:{idx+1}  mse:{mse}  update_diff:{update_diff}")
         else:
             raise
         
@@ -1094,7 +1096,7 @@ class Sparse_Vector_Auto_Regressive:
 
         return inf
 
-    def select_order(self, maxlag=15, ic="aic", solver="coordinate descent", isVisible=False) -> int:
+    def select_order(self, maxlag=15, ic="aic", solver="external library", isVisible=False) -> int:
         if isVisible == True:
             print(f"SVAR model | {ic}", flush=True)
         
