@@ -698,7 +698,7 @@ class Sparse_Vector_Auto_Regressive:
                  l1_ratio:float=0.01,                  # L1・L2正則化の強さ配分・比率
                  tol:float=1e-6,                     # 許容誤差
                  isStandardization:bool=True,        # 正規化処理の適用有無
-                 max_iterate:int=1000000,            # 最大ループ回数
+                 max_iterate:int=30000,              # 最大ループ回数
                  learning_rate:float=0.0001,         # 学習係数
                  random_state=None) -> None:         # 乱数のシード値
         if type(train_data) is pd.core.frame.DataFrame:
@@ -793,7 +793,7 @@ class Sparse_Vector_Auto_Regressive:
         
         return True
 
-    def fit(self, lags:int=1, offset:int=0, solver:str='external library') -> bool:
+    def fit(self, lags:int=1, offset:int=0, solver:str='external library', visible_flg:bool=False) -> bool:
         # caution!!!
         # OLS(Ordinary Learst Squares)推定量を計算する際に
         # 擬似逆行列(pinv関数)を使用している箇所が存在する
@@ -854,18 +854,33 @@ class Sparse_Vector_Auto_Regressive:
 
             y_data = (y_data - self.y_standardization[0]) / self.y_standardization[1]
         
-        # 本ライブラリで実装されているアルゴリズムは以下の2点となる
+        # 本ライブラリで実装されているアルゴリズムは以下の4点となる
+        # ・sklearnライブラリに実装されているElasticNet(外部ライブラリ)
         # ・座標降下法アルゴリズム(CD: Coordinate Descent Algorithm)
         # ・メジャライザー最適化(ISTA: Iterative Shrinkage soft-Thresholding Algorithm)の亜種
-        # これらのアルゴリズムは両者共に同じ目的関数を最適化している
+        # これらのアルゴリズムは全て同じ目的関数を最適化している
         # しかし、実際に同一のパラメータでパラメータ探索をさせても同一の解は得られない
-        # これは、主にISTAのアルゴリズムが勾配降下法と同様の性質を有していることが原因である
+        # これは、実装の細かな違いによるものであったり、解析解ではなく近似解が得られるためであったりする
+        # 特にISTAは勾配降下法と同等の性質を有しているため、異なる近似解が得られる
         # すなわち実行のたびに異なる解が導かれるかつ極所最適解に落ち着くことがある
         # また、外部ライブラリとしてsklearn.linear_model.ElasticNetを利用することもできる
         # この外部ライブラリは内部で座標降下法で探索を行っている点で本ライブラリと同等である
         # 一方で、この外部ライブラリはC言語(Cython)を利用してチューニングが行われている
         # また広く公開され、多くの人に利用されているライブラリでもあるため速度・品質ともにレベルが高い
         # 探索解の品質を保証したいのであれば、外部ライブラリの利用を強く推奨する
+        # 最後に広く認められているわけではないため使用の際には注意が必要であるが、本ライブラリにて実装済みの
+        # これら3種類のアルゴリズムが想定する目的関数は以下のとおり
+        # A = 説明変数x + 切片b の行列(データ数n ✖️ (説明変数数s + 1))
+        # B = 目的変数y の行列(データ数n ✖️ 目的変数数m)
+        # X = 説明変数xの係数 + 切片bの係数 の行列((説明変数数s + 1) ✖️ 目的変数数m)
+        # λ_1 = 正則化の強度 * l1_ratio
+        # λ_2 = 正則化の強度 * (1 - l1_ratio)
+        # math: \begin{equation}
+        # math: \begin{split}
+        # math: Objective &= \frac{1}{n} \| B - AX \|_2^2 + \frac{λ_2}{2} \| X \|_2^2 + λ_1 \|X\|_1 \\
+        # math: &= tr [ \left( B - AX \right) ^T \left( B - AX \right) ] + \frac{λ_2 n}{2} tr [ X^T X ] + λ_1 n \sum_{i=1} |x_i |
+        # math: \end{split}
+        # math: \end{equation}
         # 参考までに各オプションごとの実行速度は以下の通り
         # external library  >>  coordinate descent  >>  ISTA
         
@@ -877,6 +892,26 @@ class Sparse_Vector_Auto_Regressive:
             
             self.alpha, self.alpha0 = model.coef_.T, model.intercept_
             self.alpha0 = self.alpha0.reshape([1, y_data.shape[1]])
+            
+            if visible_flg:
+                l1_norm = self.norm_α * self.l1_ratio       * num
+                l2_norm = self.norm_α * (1 - self.l1_ratio) * num
+                A       = np.hstack([x_data, np.ones([num, 1])])
+                B       = y_data
+                X       = np.vstack([self.alpha, self.alpha0])
+                DIFF = B - np.dot(A, X)
+                DIFF = np.dot(DIFF.T, DIFF)
+                SQUA = np.dot(X.T, X)
+                ABSO = np.abs(X)
+                OBJE = 1 / 2 * np.sum(np.diag(DIFF)) + l2_norm / 2 * np.sum(np.diag(SQUA)) + l1_norm * np.sum(ABSO)
+                print("平均二乗誤差(MSE):", np.sum(np.diag(DIFF)) / num, flush=True)
+                print("L2正則化項(l2 norm):", np.sum(np.diag(SQUA)))
+                print("L1正則化項(l1 norm):", np.sum(ABSO))
+                print("目的関数(Objective): ", OBJE)
+                
+                DLoss = np.dot(A.T, B) - l1_norm * np.sign(X) - np.dot(np.dot(A.T, A) + l2_norm * np.identity(s + 1), X)
+                print("目的関数(Objective)の微分: ", np.abs(DLoss).sum())
+            
         elif solver == "coordinate descent":
             # ラッソ最適化(L1正則化)とリッジ最適化(L2正則化)を行なっている
             # 注意点として、切片に対してはラッソ最適化を行わないことが挙げられる
@@ -885,37 +920,66 @@ class Sparse_Vector_Auto_Regressive:
             # そのため、一般にはラッソ最適化を切片に対しては適用しない習慣がある
             # このライブラリもこの習慣に従うことにする
             # 実装アルゴリズムは座標降下法である
-            
+            # できる限り高速に処理を行いたかったので、このような実装になった
+            # このアルゴリズムの計算量は、O(ループ回数 × 説明変数の数 × O(行列積))である
+            # 1×M, M×Lの大きさを持つ行列A, Bを想定すると、行列積の計算量はO(ML)となる
+            # このSVARライブラリではそれぞれ、M=(説明変数の数 + 1) L=目的変数の数に対応している
+            # 計算量オーダーを書き直すと O(ループ回数 × 説明変数の数 × ML)となる
+            # このアルゴリズムを利用するにあたって、学習対象データの正規化などの条件は特にない
             l1_norm = self.norm_α * self.l1_ratio       * num
             l2_norm = self.norm_α * (1 - self.l1_ratio) * num
             A       = np.hstack([x_data, np.ones([num, 1])])
             b       = y_data
             
+            L = np.dot(A.T, A) + l2_norm * np.identity(s + 1)
+            R = np.dot(A.T, b)
+            D = np.diag(np.diag(L))
+            G = np.diag(L)
+            C = L - D
+                
+            # 切片に対して、L1正則化を適用しない
+            C[s, :] = 0
+            
             x_new = np.zeros([s + 1, b.shape[1]])
+            x_new[s, :] = R[s, :] / G[s]
             for idx1 in range(0, self.max_iterate):
                 x_old = x_new.copy()
-                for idx3 in range(0, s + 1):
-                    x_new[idx3, :] = 0
-                    U = np.sum((b - np.dot(A, x_new)) * A[:, idx3].reshape([num, 1]), axis=0)
-                    D = (A[:, idx3] ** 2).sum()
-                    if idx3 != s:
-                        x_new[idx3, :] = soft_threshold(U, l1_norm) / (D + l2_norm)
-                    else:
-                        x_new[idx3, :] = U / (D + l2_norm)
+
+                for idx3 in range(0, s):
+                    tmp = R[idx3, :] - np.dot(C[idx3, :], x_new)
+                    x_new[idx3, :] = soft_threshold(tmp, l1_norm) / G[idx3]
                 
                 ΔDiff = np.sqrt(np.sum((x_new - x_old) ** 2))
-                # if idx1 % 100 == 0:
-                #     mse = np.sum(ΔDiff ** 2) / num
-                #     print(f"ite:{idx1+1}  mse:{mse}  ΔDiff:{ΔDiff}")
+                if visible_flg:
+                    mse = np.sum(ΔDiff ** 2) / num
+                    print(f"ite:{idx1+1}  mse:{mse}  ΔDiff:{ΔDiff}")
                 
-                if not ΔDiff <= self.tol:
-                    x_old = x_new.copy()
-                else:
+                if ΔDiff <= self.tol:
                     break
             
             x = x_new
             self.alpha, self.alpha0 = x[0:s, :], x[s, :]
             self.alpha0 = self.alpha0.reshape([1, x.shape[1]])
+            
+            if visible_flg:
+                l1_norm = self.norm_α * self.l1_ratio       * num
+                l2_norm = self.norm_α * (1 - self.l1_ratio) * num
+                A       = np.hstack([x_data, np.ones([num, 1])])
+                B       = y_data
+                X       = np.vstack([self.alpha, self.alpha0])
+                DIFF = B - np.dot(A, X)
+                DIFF = np.dot(DIFF.T, DIFF)
+                SQUA = np.dot(X.T, X)
+                ABSO = np.abs(X)
+                OBJE = 1 / 2 * np.sum(np.diag(DIFF)) + l2_norm / 2 * np.sum(np.diag(SQUA)) + l1_norm * np.sum(ABSO)
+                print("平均二乗誤差(MSE):", np.sum(np.diag(DIFF)) / num, flush=True)
+                print("L2正則化項(l2 norm):", np.sum(np.diag(SQUA)))
+                print("L1正則化項(l1 norm):", np.sum(ABSO))
+                print("目的関数(Objective): ", OBJE)
+                
+                DLoss = np.dot(A.T, B) - l1_norm * np.sign(X) - np.dot(np.dot(A.T, A) + l2_norm * np.identity(s + 1), X)
+                print("目的関数(Objective)の微分: ", np.abs(DLoss).sum())
+            
         elif solver == "ISTA":
             # ラッソ最適化(L1正則化)とリッジ最適化(L2正則化)を行なっている
             # 注意点として、切片に対してはラッソ最適化を行わないことが挙げられる
@@ -950,12 +1014,32 @@ class Sparse_Vector_Auto_Regressive:
                 self.alpha0 = self.alpha0 + diff_alpha0
                 
                 update_diff = np.sqrt(np.sum(Δalpha ** 2) + np.sum(Δalpha0 ** 2))
+                if visible_flg and (idx % 5000 == 0):
+                    mse = np.sum(ΔLoss ** 2) / num
+                    print(f"ite:{idx+1}  mse:{mse}  update_diff:{update_diff}")
+                
                 if update_diff <= self.tol:
                     break
+            
+            if visible_flg:
+                l1_norm = self.norm_α * self.l1_ratio       * num
+                l2_norm = self.norm_α * (1 - self.l1_ratio) * num
+                A       = np.hstack([x_data, np.ones([num, 1])])
+                B       = y_data
+                X       = np.vstack([self.alpha, self.alpha0])
+                DIFF = B - np.dot(A, X)
+                DIFF = np.dot(DIFF.T, DIFF)
+                SQUA = np.dot(X.T, X)
+                ABSO = np.abs(X)
+                OBJE = 1 / 2 * np.sum(np.diag(DIFF)) + l2_norm / 2 * np.sum(np.diag(SQUA)) + l1_norm * np.sum(ABSO)
+                print("平均二乗誤差(MSE):", np.sum(np.diag(DIFF)) / num, flush=True)
+                print("L2正則化項(l2 norm):", np.sum(np.diag(SQUA)))
+                print("L1正則化項(l1 norm):", np.sum(ABSO))
+                print("目的関数(Objective): ", OBJE)
                 
-                # if idx % 100 == 0:
-                #     mse = np.sum(ΔLoss ** 2) / num
-                #     print(f"ite:{idx+1}  mse:{mse}  update_diff:{update_diff}")
+                DLoss = np.dot(A.T, B) - l1_norm * np.sign(X) - np.dot(np.dot(A.T, A) + l2_norm * np.identity(s + 1), X)
+                print("目的関数(Objective)の微分: ", np.abs(DLoss).sum())
+            
         else:
             raise
         
