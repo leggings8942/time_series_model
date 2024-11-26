@@ -699,7 +699,7 @@ class Sparse_Vector_Auto_Regressive:
                  tol:float=1e-6,                     # 許容誤差
                  isStandardization:bool=True,        # 正規化処理の適用有無
                  max_iterate:int=30000,              # 最大ループ回数
-                 learning_rate:float=0.0001,         # 学習係数
+                 learning_rate:float=0.001 ,         # 学習係数
                  random_state=None) -> None:         # 乱数のシード値
         if type(train_data) is pd.core.frame.DataFrame:
             train_data = train_data.to_numpy()
@@ -984,10 +984,13 @@ class Sparse_Vector_Auto_Regressive:
             # 一方で、ラッソ最適化は係数を0にするために利用される手法である
             # そのため、一般にはラッソ最適化を切片に対しては適用しない習慣がある
             # このライブラリもこの習慣に従うことにする
-            # 実装アルゴリズムは一般的なメジャライザー最適化(ISTA: Iterative Shrinkage soft-Thresholding Algorithm)である
+            # 実装アルゴリズムは一般的なメジャライザー最適化(ISTA: Iterative Shrinkage soft-Thresholding Algorithm)の亜種である
+            # このアルゴリズムのメジャライザー部分は勾配降下法の更新式に等しい
+            # そのため、勾配降下法における最適化アルゴリズムを適用することにした
+            # 利用したアルゴリズムはRafael(自前アルゴリズム)であり、定数を使用する場合と比較して高速に収束することが期待できる
             # このアルゴリズムを利用する際の注意点として、以下の２つが挙げられる
             # ・教師データ(X, Y)がそれぞれ正規化されている必要があること
-            # ・大域的最適解を探索できるとは限らないこと
+            # ・設定イレーション回数が十分でない場合に、大域的最適解への収束が保証できないこと
             # 正規化されていない場合にはうまく収束しないくなる等、アルゴリズムが機能しなくなる可能性がある
             # isStandardization=True に設定しておけば、問題ない
             
