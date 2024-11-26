@@ -976,86 +976,6 @@ class Sparse_Vector_Auto_Regressive:
                 
                 DLoss = np.dot(A.T, B) - l1_norm * np.sign(X) - np.dot(np.dot(A.T, A) + l2_norm * np.identity(s + 1), X)
                 print("目的関数(Objective)の微分: ", np.abs(DLoss).sum())
-        
-        elif solver == "origin":
-            # ラッソ最適化(L1正則化)とリッジ最適化(L2正則化)を行なっている
-            # 注意点として、切片に対してはラッソ最適化を行わないことが挙げられる
-            # リッジ最適化は一般に係数を0にするためではなく、最適化対象のパラメータ全体を小さく保つために利用される
-            # 一方で、ラッソ最適化は係数を0にするために利用される手法である
-            # そのため、一般にはラッソ最適化を切片に対しては適用しない習慣がある
-            # このライブラリもこの習慣に従うことにする
-            # ラッソ最適化のアルゴリズムは自前のものであり、いわゆる座標降下法の亜種である
-            # 一般的な座標降下法は各変数に対して更新を行うため、計算量が比較的に大きい
-            # できる限り高速に処理を行いたかったので、このような実装になった
-            # このアルゴリズムと一般的な座標降下法との最大の差異は、逆行列を陽に計算するか・陰に計算するかの違いである
-            # 逆行列の計算を陽に計算することにより、かえって全体の計算量が減るように設計した
-            # これにより収束条件が、符号の一致のみに限定されたため比較的に早く収束することが期待できる
-            # このアルゴリズムの計算量は、O(ループ回数 × O(行列積))である
-            # N×M, M×Lの大きさを持つ行列A, Bを想定すると、行列積の計算量はO(NML)となる
-            # このSVARライブラリではそれぞれ、N=説明変数の数 M=説明変数の数 L=目的変数の数に対応している
-            # 一般的な座標降下法と比較して計算量オーダー O(ループ回数 × NML)は同じである
-            # しかしループ回数が少なくなること・定数項kの部分が小さいため、このアルゴリズムの方が高速に動作することを期待できる
-            # このアルゴリズムを利用するにあたって、学習対象データの正規化などの条件は特にない
-            # ただし、逆行列を必要とするため正則な学習データ行列であることが望ましい
-            l1_norm = self.norm_α * self.l1_ratio       * num
-            l2_norm = self.norm_α * (1 - self.l1_ratio) * num
-            A       = np.hstack([x_data, np.ones([num, 1])])
-            b       = y_data
-            try:
-                L = np.linalg.inv( np.dot(A.T, A) + l2_norm * np.identity(s + 1))
-            except np.linalg.LinAlgError as e:
-                L = np.linalg.pinv(np.dot(A.T, A) + l2_norm * np.identity(s + 1))
-            finally:
-                R = np.dot(A.T, b)
-                T = np.dot(L, R)
-                D = np.diag(np.diag(L))
-                G = np.diag(L).reshape([s + 1, 1]).copy()
-                C = L - D
-                
-                # 切片に対して、L1正則化を適用しない
-                G[s, 0] = 0
-                C[:, s] = 0
-                
-            x_new = soft_threshold(T, l1_norm * np.abs(G))
-            for aaa in range(0, self.max_iterate):
-                # tmp   = T - l1_norm * np.dot(C, np.sign(x_old))
-                # x_new = soft_threshold(tmp, l1_norm * np.abs(G))
-                x_old = x_new.copy()
-                
-                x_new[s, :] = T[s, :] - l1_norm * np.dot(C[s, :], np.sign(x_new))
-                for idx3 in range(0, s):
-                    tmp   = T[idx3, :] - l1_norm * np.dot(C[idx3, :], np.sign(x_new))
-                    x_new[idx3, :] = soft_threshold(tmp, l1_norm * G[idx3])
-                    
-                if not np.all(np.sign(x_new) == np.sign(x_old)):
-                    diff = np.sum((np.sign(x_new) - np.sign(x_old)) ** 2)
-                    print(f"ite:{aaa+1}  diff:{diff}")
-                    
-                    x_old = x_new
-                else:
-                    break
-            x = x_new
-            self.alpha, self.alpha0 = x[0:s, :], x[s, :]
-            self.alpha0 = self.alpha0.reshape([1, x.shape[1]])
-            
-            if visible_flg:
-                l1_norm = self.norm_α * self.l1_ratio       * num
-                l2_norm = self.norm_α * (1 - self.l1_ratio) * num
-                A       = np.hstack([x_data, np.ones([num, 1])])
-                B       = y_data
-                X       = np.vstack([self.alpha, self.alpha0])
-                DIFF = B - np.dot(A, X)
-                DIFF = np.dot(DIFF.T, DIFF)
-                SQUA = np.dot(X.T, X)
-                ABSO = np.abs(X)
-                OBJE = 1 / 2 * np.sum(np.diag(DIFF)) + l2_norm / 2 * np.sum(np.diag(SQUA)) + l1_norm * np.sum(ABSO)
-                print("平均二乗誤差(MSE):", np.sum(np.diag(DIFF)) / num, flush=True)
-                print("L2正則化項(l2 norm):", np.sum(np.diag(SQUA)))
-                print("L1正則化項(l1 norm):", np.sum(ABSO))
-                print("目的関数(Objective): ", OBJE)
-                
-                DLoss = np.dot(A.T, B) - l1_norm * np.sign(X) - np.dot(np.dot(A.T, A) + l2_norm * np.identity(s + 1), X)
-                print("目的関数(Objective)の微分: ", np.abs(DLoss).sum())
             
         elif solver == "ISTA":
             # ラッソ最適化(L1正則化)とリッジ最適化(L2正則化)を行なっている
@@ -1071,32 +991,36 @@ class Sparse_Vector_Auto_Regressive:
             # 正規化されていない場合にはうまく収束しないくなる等、アルゴリズムが機能しなくなる可能性がある
             # isStandardization=True に設定しておけば、問題ない
             
-            l1_norm     = self.norm_α * self.l1_ratio       * num
-            l2_norm     = self.norm_α * (1 - self.l1_ratio) * num
-            self.alpha  = self.random.random([s, y_data.shape[1]])
-            self.alpha0 = self.random.random([1, y_data.shape[1]])
+            l1_norm      = self.norm_α * self.l1_ratio       * num
+            l2_norm      = self.norm_α * (1 - self.l1_ratio) * num
+            A            = np.hstack([x_data, np.ones([num, 1])])
+            b            = y_data
+            x_new        = self.random.random([A.shape[1], b.shape[1]])
+            l1_specifier = np.ones(x_new.shape)
+            l1_specifier[s, :] = 0
+            Base_Loss    = 0
             for idx in range(0, self.max_iterate):
-                y_pred  = np.dot(x_data, self.alpha) + self.alpha0
+                ΔLoss  = b - np.dot(A, x_new)
+                ΔDiff  = np.dot(A.T, ΔLoss)
                 
-                ΔLoss   = y_data - y_pred
-                Δalpha  = np.dot(x_data.T, ΔLoss) - l2_norm * self.alpha
-                Δalpha0 = np.sum(ΔLoss, axis=0)   - l2_norm * self.alpha0
+                diff_x = self.correct_alpha.update(ΔDiff)
+                rho    = diff_x / (ΔDiff + 1e-32)
+                x_new  = soft_threshold(x_new + diff_x, rho * l1_norm * l1_specifier)
+                x_new  = x_new / (1 + rho * l2_norm)
                 
-                diff_alpha  = self.correct_alpha.update(Δalpha)
-                diff_alpha0 = self.correct_alpha0.update(Δalpha0)
-                rho         = diff_alpha / (Δalpha + 1e-32)
-                
-                # 切片に対して、L1正則化を適用しない
-                self.alpha  = soft_threshold(self.alpha + diff_alpha, l1_norm * rho)
-                self.alpha0 = self.alpha0 + diff_alpha0
-                
-                update_diff = np.sqrt(np.sum(Δalpha ** 2) + np.sum(Δalpha0 ** 2))
+                mse = np.sum(ΔLoss ** 2) / num
                 if visible_flg and (idx % 5000 == 0):
-                    mse = np.sum(ΔLoss ** 2) / num
-                    print(f"ite:{idx+1}  mse:{mse}  update_diff:{update_diff}")
+                    update_diff = np.sum(diff_x ** 2)
+                    print(f"ite:{idx+1}  mse:{mse}  update_diff:{update_diff} diff:{np.abs(Base_Loss - mse)}")
                 
-                if update_diff <= self.tol:
+                if np.abs(Base_Loss - mse) <= self.tol:
                     break
+                else:
+                    Base_Loss = mse
+            
+            x = x_new
+            self.alpha, self.alpha0 = x[0:s, :], x[s, :]
+            self.alpha0 = self.alpha0.reshape([1, x.shape[1]])
             
             if visible_flg:
                 l1_norm = self.norm_α * self.l1_ratio       * num
