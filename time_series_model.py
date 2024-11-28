@@ -695,11 +695,10 @@ class Sparse_Vector_Auto_Regressive:
     def __init__(self,
                  train_data,                         # 学習対象時系列データ
                  norm_α:float=1.0,                   # L1・L2正則化パラメータの強さ
-                 l1_ratio:float=0.01,                  # L1・L2正則化の強さ配分・比率
+                 l1_ratio:float=0.1,                 # L1・L2正則化の強さ配分・比率
                  tol:float=1e-6,                     # 許容誤差
                  isStandardization:bool=True,        # 正規化処理の適用有無
                  max_iterate:int=30000,              # 最大ループ回数
-                 learning_rate:float=0.001 ,         # 学習係数
                  random_state=None) -> None:         # 乱数のシード値
         if type(train_data) is pd.core.frame.DataFrame:
             train_data = train_data.to_numpy()
@@ -725,9 +724,7 @@ class Sparse_Vector_Auto_Regressive:
         self.tol                 = tol
         self.solver              = ""
         self.data_num            = 0
-        self.max_iterate         = max_iterate
-        self.correct_alpha       = Update_Rafael(alpha=learning_rate)
-        self.correct_alpha0      = Update_Rafael(alpha=learning_rate)
+        self.max_iterate         = round(max_iterate)
         self.unbiased_dispersion = 0
         self.dispersion          = 0
         self.ma_inf              = np.zeros([1, 1])
@@ -756,8 +753,6 @@ class Sparse_Vector_Auto_Regressive:
         buf = buf + [self.solver]
         buf = buf + [self.data_num]
         buf = buf + [self.max_iterate]
-        buf = buf + [self.correct_alpha]
-        buf = buf + [self.correct_alpha0]
         buf = buf + [self.unbiased_dispersion]
         buf = buf + [self.dispersion]
         buf = buf + [self.ma_inf.copy()]
@@ -782,14 +777,12 @@ class Sparse_Vector_Auto_Regressive:
         self.solver              = buf[11]
         self.data_num            = buf[12]
         self.max_iterate         = buf[13]
-        self.correct_alpha       = buf[14]
-        self.correct_alpha0      = buf[15]
-        self.unbiased_dispersion = buf[16]
-        self.dispersion          = buf[17]
-        self.ma_inf              = buf[18]
-        self.learn_flg           = buf[19]
-        self.random_state        = buf[20]
-        self.random              = buf[21]
+        self.unbiased_dispersion = buf[14]
+        self.dispersion          = buf[15]
+        self.ma_inf              = buf[16]
+        self.learn_flg           = buf[17]
+        self.random_state        = buf[18]
+        self.random              = buf[19]
         
         return True
 
@@ -857,7 +850,8 @@ class Sparse_Vector_Auto_Regressive:
         # 本ライブラリで実装されているアルゴリズムは以下の4点となる
         # ・sklearnライブラリに実装されているElasticNet(外部ライブラリ)
         # ・座標降下法アルゴリズム(CD: Coordinate Descent Algorithm)
-        # ・メジャライザー最適化(ISTA: Iterative Shrinkage soft-Thresholding Algorithm)の亜種
+        # ・メジャライザー最適化( ISTA: Iterative Shrinkage soft-Thresholding Algorithm)
+        # ・メジャライザー最適化(FISTA: Fast Iterative Shrinkage soft-Thresholding Algorithm)
         # これらのアルゴリズムは全て同じ目的関数を最適化している
         # しかし、実際に同一のパラメータでパラメータ探索をさせても同一の解は得られない
         # これは、実装の細かな違いによるものであったり、解析解ではなく近似解が得られるためであったりする
@@ -882,7 +876,7 @@ class Sparse_Vector_Auto_Regressive:
         # math: \end{split}
         # math: \end{equation}
         # 参考までに各オプションごとの実行速度は以下の通り
-        # external library  >>  coordinate descent  >>  ISTA
+        # external library  >>  FISTA  >>  ISTA  >>  coordinate descent
         
         self.lags = lags
         num, s    = x_data.shape
@@ -984,10 +978,8 @@ class Sparse_Vector_Auto_Regressive:
             # 一方で、ラッソ最適化は係数を0にするために利用される手法である
             # そのため、一般にはラッソ最適化を切片に対しては適用しない習慣がある
             # このライブラリもこの習慣に従うことにする
-            # 実装アルゴリズムは一般的なメジャライザー最適化(ISTA: Iterative Shrinkage soft-Thresholding Algorithm)の亜種である
+            # 実装アルゴリズムは一般的なメジャライザー最適化(ISTA: Iterative Shrinkage soft-Thresholding Algorithm)である
             # このアルゴリズムのメジャライザー部分は勾配降下法の更新式に等しい
-            # そのため、勾配降下法における最適化アルゴリズムを適用することにした
-            # 利用したアルゴリズムはRafael(自前アルゴリズム)であり、定数を使用する場合と比較して高速に収束することが期待できる
             # このアルゴリズムを利用する際の注意点として、以下の２つが挙げられる
             # ・教師データ(X, Y)がそれぞれ正規化されている必要があること
             # ・設定イレーション回数が十分でない場合に、大域的最適解への収束が保証できないこと
@@ -998,6 +990,7 @@ class Sparse_Vector_Auto_Regressive:
             l2_norm      = self.norm_α * (1 - self.l1_ratio) * num
             A            = np.hstack([x_data, np.ones([num, 1])])
             b            = y_data
+            L            = np.linalg.norm(A.T.dot(A), ord="fro")
             x_new        = self.random.random([A.shape[1], b.shape[1]])
             l1_specifier = np.ones(x_new.shape)
             l1_specifier[s, :] = 0
@@ -1006,17 +999,92 @@ class Sparse_Vector_Auto_Regressive:
                 ΔLoss  = b - np.dot(A, x_new)
                 ΔDiff  = np.dot(A.T, ΔLoss)
                 
-                diff_x = self.correct_alpha.update(ΔDiff)
-                rho    = diff_x / (ΔDiff + 1e-32)
+                diff_x = ΔDiff / L
+                rho    = 1 / L
                 x_new  = soft_threshold(x_new + diff_x, rho * l1_norm * l1_specifier)
                 x_new  = x_new / (1 + rho * l2_norm)
                 
                 mse = np.sum(ΔLoss ** 2) / num
-                if visible_flg and (idx % 5000 == 0):
+                if visible_flg and (idx % 100 == 0):
                     update_diff = np.sum(diff_x ** 2)
                     print(f"ite:{idx+1}  mse:{mse}  update_diff:{update_diff} diff:{np.abs(Base_Loss - mse)}")
                 
                 if np.abs(Base_Loss - mse) <= self.tol:
+                    break
+                else:
+                    Base_Loss = mse
+            
+            x = x_new
+            self.alpha, self.alpha0 = x[0:s, :], x[s, :]
+            self.alpha0 = self.alpha0.reshape([1, x.shape[1]])
+            
+            if visible_flg:
+                l1_norm = self.norm_α * self.l1_ratio       * num
+                l2_norm = self.norm_α * (1 - self.l1_ratio) * num
+                A       = np.hstack([x_data, np.ones([num, 1])])
+                B       = y_data
+                X       = np.vstack([self.alpha, self.alpha0])
+                DIFF = B - np.dot(A, X)
+                DIFF = np.dot(DIFF.T, DIFF)
+                SQUA = np.dot(X.T, X)
+                ABSO = np.abs(X)
+                OBJE = 1 / 2 * np.sum(np.diag(DIFF)) + l2_norm / 2 * np.sum(np.diag(SQUA)) + l1_norm * np.sum(ABSO)
+                print("平均二乗誤差(MSE):", np.sum(np.diag(DIFF)) / num, flush=True)
+                print("L2正則化項(l2 norm):", np.sum(np.diag(SQUA)))
+                print("L1正則化項(l1 norm):", np.sum(ABSO))
+                print("目的関数(Objective): ", OBJE)
+                
+                DLoss = np.dot(A.T, B) - l1_norm * np.sign(X) - np.dot(np.dot(A.T, A) + l2_norm * np.identity(s + 1), X)
+                print("目的関数(Objective)の微分: ", np.abs(DLoss).sum())
+        
+        elif solver == "FISTA":
+            # ラッソ最適化(L1正則化)とリッジ最適化(L2正則化)を行なっている
+            # 注意点として、切片に対してはラッソ最適化を行わないことが挙げられる
+            # リッジ最適化は一般に係数を0にするためではなく、最適化対象のパラメータ全体を小さく保つために利用される
+            # 一方で、ラッソ最適化は係数を0にするために利用される手法である
+            # そのため、一般にはラッソ最適化を切片に対しては適用しない習慣がある
+            # このライブラリもこの習慣に従うことにする
+            # 実装アルゴリズムは一般的なメジャライザー最適化(FISTA: Fast Iterative Shrinkage soft-Thresholding Algorithm)である
+            # このアルゴリズムのメジャライザー部分は勾配降下法の更新式に等しい
+            # このアルゴリズムを利用する際の注意点として、以下の２つが挙げられる
+            # ・教師データ(X, Y)がそれぞれ正規化されている必要があること
+            # ・設定イレーション回数が十分でない場合に、大域的最適解への収束が保証できないこと
+            # 正規化されていない場合にはうまく収束しないくなる等、アルゴリズムが機能しなくなる可能性がある
+            # isStandardization=True に設定しておけば、問題ない
+            
+            l1_norm      = self.norm_α * self.l1_ratio       * num
+            l2_norm      = self.norm_α * (1 - self.l1_ratio) * num
+            A            = np.hstack([x_data, np.ones([num, 1])])
+            b            = y_data
+            L            = np.linalg.norm(A.T.dot(A), ord="fro")
+            x_new        = self.random.random([A.shape[1], b.shape[1]])
+            l1_specifier = np.ones(x_new.shape)
+            l1_specifier[s, :] = 0
+            x_k_m_1      = x_new.copy()
+            time_k       = 0
+            time_k_a_1   = 0
+            Base_Loss    = 0
+            for idx in range(0, self.max_iterate):
+                ΔLoss  = b - np.dot(A, x_new)
+                ΔDiff  = np.dot(A.T, ΔLoss)
+                
+                diff_x = ΔDiff / L
+                rho    = 1 / L
+                x_tmp  = soft_threshold(x_new + diff_x, rho * l1_norm * l1_specifier)
+                x_tmp  = x_tmp / (1 + rho * l2_norm)
+                
+                time_k_a_1 = (1 + np.sqrt(1 + 4 * (time_k ** 2))) / 2
+                x_new      = x_tmp + (time_k - 1) / (time_k_a_1) * (x_tmp - x_k_m_1)
+                
+                time_k  = time_k_a_1
+                x_k_m_1 = x_tmp
+                
+                mse = np.sum(ΔLoss ** 2) / num
+                if visible_flg and (idx % 100 == 0):
+                    update_diff = np.sum(diff_x ** 2)
+                    print(f"ite:{idx+1}  mse:{mse}  update_diff:{update_diff} diff:{np.abs(Base_Loss - mse)}")
+                
+                if (idx != 1) and (np.abs(Base_Loss - mse) <= self.tol):
                     break
                 else:
                     Base_Loss = mse
