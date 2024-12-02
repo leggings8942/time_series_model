@@ -908,13 +908,16 @@ class Sparse_Vector_Auto_Regressive:
                 DIFF = B - np.dot(A, X)
                 DIFF = np.dot(DIFF.T, DIFF)
                 SQUA = np.dot(X.T, X)
+                SQUA[B.shape[1]-1, B.shape[1]-1] = 0
                 ABSO = np.abs(X)
+                ABSO[s, :] = 0
                 OBJE = 1 / 2 * np.sum(np.diag(DIFF)) + l2_norm / 2 * np.sum(np.diag(SQUA)) + l1_norm * np.sum(ABSO)
                 print("平均二乗誤差(MSE):", np.sum(np.diag(DIFF)) / num, flush=True)
                 print("L2正則化項(l2 norm):", np.sum(np.diag(SQUA)))
                 print("L1正則化項(l1 norm):", np.sum(ABSO))
                 print("目的関数(Objective): ", OBJE)
                 
+                X     = np.vstack([self.alpha, np.zeros([1, B.shape[1]])])
                 DLoss = np.dot(A.T, B) - l1_norm * np.sign(X) - np.dot(np.dot(A.T, A) + l2_norm * np.identity(s + 1), X)
                 print("目的関数(Objective)の微分: ", np.abs(DLoss).sum())
             
@@ -957,7 +960,7 @@ class Sparse_Vector_Auto_Regressive:
                     x_new[idx3, :] = soft_threshold(tmp, l1_norm) / G[idx3]
                 
                 ΔDiff = np.sqrt(np.sum((x_new - x_old) ** 2))
-                if visible_flg:
+                if visible_flg and (idx1 % 1000 == 0):
                     mse = np.sum(ΔDiff ** 2) / num
                     print(f"ite:{idx1+1}  mse:{mse}  ΔDiff:{ΔDiff}")
                 
@@ -977,13 +980,16 @@ class Sparse_Vector_Auto_Regressive:
                 DIFF = B - np.dot(A, X)
                 DIFF = np.dot(DIFF.T, DIFF)
                 SQUA = np.dot(X.T, X)
+                SQUA[B.shape[1]-1, B.shape[1]-1] = 0
                 ABSO = np.abs(X)
+                ABSO[s, :] = 0
                 OBJE = 1 / 2 * np.sum(np.diag(DIFF)) + l2_norm / 2 * np.sum(np.diag(SQUA)) + l1_norm * np.sum(ABSO)
                 print("平均二乗誤差(MSE):", np.sum(np.diag(DIFF)) / num, flush=True)
                 print("L2正則化項(l2 norm):", np.sum(np.diag(SQUA)))
                 print("L1正則化項(l1 norm):", np.sum(ABSO))
                 print("目的関数(Objective): ", OBJE)
                 
+                X     = np.vstack([self.alpha, np.zeros([1, B.shape[1]])])
                 DLoss = np.dot(A.T, B) - l1_norm * np.sign(X) - np.dot(np.dot(A.T, A) + l2_norm * np.identity(s + 1), X)
                 print("目的関数(Objective)の微分: ", np.abs(DLoss).sum())
             
@@ -1045,13 +1051,16 @@ class Sparse_Vector_Auto_Regressive:
                 DIFF = B - np.dot(A, X)
                 DIFF = np.dot(DIFF.T, DIFF)
                 SQUA = np.dot(X.T, X)
+                SQUA[B.shape[1]-1, B.shape[1]-1] = 0
                 ABSO = np.abs(X)
+                ABSO[s, :] = 0
                 OBJE = 1 / 2 * np.sum(np.diag(DIFF)) + l2_norm / 2 * np.sum(np.diag(SQUA)) + l1_norm * np.sum(ABSO)
                 print("平均二乗誤差(MSE):", np.sum(np.diag(DIFF)) / num, flush=True)
                 print("L2正則化項(l2 norm):", np.sum(np.diag(SQUA)))
                 print("L1正則化項(l1 norm):", np.sum(ABSO))
                 print("目的関数(Objective): ", OBJE)
                 
+                X     = np.vstack([self.alpha, np.zeros([1, B.shape[1]])])
                 DLoss = np.dot(A.T, B) - l1_norm * np.sign(X) - np.dot(np.dot(A.T, A) + l2_norm * np.identity(s + 1), X)
                 print("目的関数(Objective)の微分: ", np.abs(DLoss).sum())
         
@@ -1122,13 +1131,16 @@ class Sparse_Vector_Auto_Regressive:
                 DIFF = B - np.dot(A, X)
                 DIFF = np.dot(DIFF.T, DIFF)
                 SQUA = np.dot(X.T, X)
+                SQUA[B.shape[1]-1, B.shape[1]-1] = 0
                 ABSO = np.abs(X)
+                ABSO[s, :] = 0
                 OBJE = 1 / 2 * np.sum(np.diag(DIFF)) + l2_norm / 2 * np.sum(np.diag(SQUA)) + l1_norm * np.sum(ABSO)
                 print("平均二乗誤差(MSE):", np.sum(np.diag(DIFF)) / num, flush=True)
                 print("L2正則化項(l2 norm):", np.sum(np.diag(SQUA)))
                 print("L1正則化項(l1 norm):", np.sum(ABSO))
                 print("目的関数(Objective): ", OBJE)
                 
+                X     = np.vstack([self.alpha, np.zeros([1, B.shape[1]])])
                 DLoss = np.dot(A.T, B) - l1_norm * np.sign(X) - np.dot(np.dot(A.T, A) + l2_norm * np.identity(s + 1), X)
                 print("目的関数(Objective)の微分: ", np.abs(DLoss).sum())
             
