@@ -118,6 +118,11 @@ class Auto_Regressive:
         
         if type(train_data) is list:
             train_data = np.array(train_data)
+            
+        if type(train_data) is not np.ndarray:
+            print(f"type(train_data) = {type(train_data)}")
+            print("エラー：：Numpy型である必要があります。")
+            raise
         
         if train_data.ndim != 1:
             print(f"train_data dims = {train_data.ndim}")
@@ -163,6 +168,11 @@ class Auto_Regressive:
         if type(test_data) is list:
             test_data = np.array(test_data)
         
+        if type(test_data) is not np.ndarray:
+            print(f"type(test_data) = {type(test_data)}")
+            print("エラー：：Numpy型である必要があります。")
+            raise
+        
         if test_data.ndim != 2:
             print(f"test_data dims = {test_data.ndim}")
             print("エラー：：次元数が一致しません。")
@@ -183,6 +193,11 @@ class Auto_Regressive:
         
         if type(test_data) is list:
             test_data = np.array(test_data)
+        
+        if type(test_data) is not np.ndarray:
+            print(f"type(test_data) = {type(test_data)}")
+            print("エラー：：Numpy型である必要があります。")
+            raise
         
         if test_data.ndim != 1:
             print(f"test_data dims = {test_data.ndim}")
@@ -286,6 +301,11 @@ class Vector_Auto_Regressive:
         
         if type(train_data) is list:
             train_data = np.array(train_data)
+        
+        if type(train_data) is not np.ndarray:
+            print(f"type(train_data) = {type(train_data)}")
+            print("エラー：：Numpy型である必要があります。")
+            raise
         
         if train_data.ndim != 2:
             print(f"train_data dims = {train_data.ndim}")
@@ -420,6 +440,11 @@ class Vector_Auto_Regressive:
         
         if type(test_data) is list:
             test_data = np.array(test_data)
+        
+        if type(test_data) is not np.ndarray:
+            print(f"type(test_data) = {type(test_data)}")
+            print("エラー：：Numpy型である必要があります。")
+            raise
         
         if test_data.ndim != 2:
             print(f"test_data dims = {test_data.ndim}")
@@ -697,14 +722,19 @@ class Sparse_Vector_Auto_Regressive:
                  norm_α:float=1.0,                   # L1・L2正則化パラメータの強さ
                  l1_ratio:float=0.1,                 # L1・L2正則化の強さ配分・比率
                  tol:float=1e-6,                     # 許容誤差
-                 isStandardization:bool=True,        # 正規化処理の適用有無
-                 max_iterate:int=30000,              # 最大ループ回数
+                 isCentralization:bool=True,         # 中心化処理の適用有無
+                 max_iterate:int=300000,             # 最大ループ回数
                  random_state=None) -> None:         # 乱数のシード値
         if type(train_data) is pd.core.frame.DataFrame:
             train_data = train_data.to_numpy()
         
         if type(train_data) is list:
             train_data = np.array(train_data)
+        
+        if type(train_data) is not np.ndarray:
+            print(f"type(train_data) = {type(train_data)}")
+            print("エラー：：Numpy型である必要があります。")
+            raise
         
         if train_data.ndim != 2:
             print(f"train_data dims = {train_data.ndim}")
@@ -718,9 +748,9 @@ class Sparse_Vector_Auto_Regressive:
         self.sigma               = np.zeros([1, 1])
         self.norm_α              = np.abs(norm_α)
         self.l1_ratio            = np.where(l1_ratio < 0, 0, np.where(l1_ratio > 1, 1, l1_ratio))
-        self.isStandardization   = isStandardization
-        self.x_standardization   = np.empty([2, 1])
-        self.y_standardization   = np.empty([2, 1])
+        self.isCentralization    = isCentralization
+        self.x_centralization    = np.empty(1)
+        self.y_centralization    = np.empty(1)
         self.tol                 = tol
         self.solver              = ""
         self.data_num            = 0
@@ -746,9 +776,9 @@ class Sparse_Vector_Auto_Regressive:
         buf = buf + [self.sigma.copy()]
         buf = buf + [self.norm_α]
         buf = buf + [self.l1_ratio]
-        buf = buf + [self.isStandardization]
-        buf = buf + [self.x_standardization]
-        buf = buf + [self.y_standardization]
+        buf = buf + [self.isCentralization]
+        buf = buf + [self.x_centralization]
+        buf = buf + [self.y_centralization]
         buf = buf + [self.tol]
         buf = buf + [self.solver]
         buf = buf + [self.data_num]
@@ -770,9 +800,9 @@ class Sparse_Vector_Auto_Regressive:
         self.sigma               = buf[4]
         self.norm_α              = buf[5]
         self.l1_ratio            = buf[6]
-        self.isStandardization   = buf[7]
-        self.x_standardization   = buf[8]
-        self.y_standardization   = buf[9]
+        self.isCentralization    = buf[7]
+        self.x_centralization    = buf[8]
+        self.y_centralization    = buf[9]
         self.tol                 = buf[10]
         self.solver              = buf[11]
         self.data_num            = buf[12]
@@ -819,33 +849,15 @@ class Sparse_Vector_Auto_Regressive:
         x_data = np.array([tmp_train_data[t-lags : t][::-1].ravel() for t in range(lags, nobs)])
         y_data = tmp_train_data[lags:]
         
-        # 正規化指定の有無
-        if self.isStandardization:
+        # 中心化指定の有無
+        if self.isCentralization:
             # x軸の正規化
-            _, s = x_data.shape
-            self.x_standardization    = np.empty([2, s])
-            self.x_standardization[0] = np.mean(x_data, axis=0)
-            self.x_standardization[1] = np.std( x_data, axis=0)
-
-            # 標準偏差が0の場合
-            zero_judge = (self.x_standardization[1] == 0)
-            self.x_standardization[0][zero_judge] = 0
-            self.x_standardization[1][zero_judge] = 1
-
-            x_data = (x_data - self.x_standardization[0]) / self.x_standardization[1]
+            self.x_centralization = np.mean(x_data, axis=0)
+            x_data = x_data - self.x_centralization
             
             # y軸の正規化
-            _, s = y_data.shape
-            self.y_standardization    = np.empty([2, s])
-            self.y_standardization[0] = np.mean(y_data, axis=0)
-            self.y_standardization[1] = np.std( y_data, axis=0)
-
-            # 標準偏差が0の場合
-            zero_judge = (self.y_standardization[1] == 0)
-            self.y_standardization[0][zero_judge] = 0
-            self.y_standardization[1][zero_judge] = 1
-
-            y_data = (y_data - self.y_standardization[0]) / self.y_standardization[1]
+            self.y_centralization = np.mean(y_data, axis=0)
+            y_data = y_data - self.y_centralization
         
         # 本ライブラリで実装されているアルゴリズムは以下の4点となる
         # ・sklearnライブラリに実装されているElasticNet(外部ライブラリ)
@@ -913,6 +925,8 @@ class Sparse_Vector_Auto_Regressive:
             # 一方で、ラッソ最適化は係数を0にするために利用される手法である
             # そのため、一般にはラッソ最適化を切片に対しては適用しない習慣がある
             # このライブラリもこの習慣に従うことにする
+            # リッジ最適化についても切片に対しては適用しないことにした
+            # これは中心化を行う前と後で、正則化の効果が変動してしまうことを防ぐためである
             # 実装アルゴリズムは座標降下法である
             # できる限り高速に処理を行いたかったので、このような実装になった
             # このアルゴリズムの計算量は、O(ループ回数 × 説明変数の数 × O(行列積))である
@@ -925,7 +939,9 @@ class Sparse_Vector_Auto_Regressive:
             A       = np.hstack([x_data, np.ones([num, 1])])
             b       = y_data
             
-            L = np.dot(A.T, A) + l2_norm * np.identity(s + 1)
+            L2NORM = l2_norm * np.identity(s + 1)
+            L2NORM[s, s] = 0
+            L = np.dot(A.T, A) + L2NORM
             R = np.dot(A.T, b)
             D = np.diag(np.diag(L))
             G = np.diag(L)
@@ -978,6 +994,8 @@ class Sparse_Vector_Auto_Regressive:
             # 一方で、ラッソ最適化は係数を0にするために利用される手法である
             # そのため、一般にはラッソ最適化を切片に対しては適用しない習慣がある
             # このライブラリもこの習慣に従うことにする
+            # リッジ最適化についても切片に対しては適用しないことにした
+            # これは中心化を行う前と後で、正則化の効果が変動してしまうことを防ぐためである
             # 実装アルゴリズムは一般的なメジャライザー最適化(ISTA: Iterative Shrinkage soft-Thresholding Algorithm)である
             # このアルゴリズムのメジャライザー部分は勾配降下法の更新式に等しい
             # このアルゴリズムを利用する際の注意点として、以下の２つが挙げられる
@@ -992,20 +1010,20 @@ class Sparse_Vector_Auto_Regressive:
             b            = y_data
             L            = np.linalg.norm(A.T.dot(A), ord="fro")
             x_new        = self.random.random([A.shape[1], b.shape[1]])
-            l1_specifier = np.ones(x_new.shape)
-            l1_specifier[s, :] = 0
+            norm_specifier = np.ones(x_new.shape)
+            norm_specifier[s, :] = 0
             Base_Loss    = 0
             for idx in range(0, self.max_iterate):
                 ΔLoss  = b - np.dot(A, x_new)
                 ΔDiff  = np.dot(A.T, ΔLoss)
                 
-                diff_x = ΔDiff / L
                 rho    = 1 / L
-                x_new  = soft_threshold(x_new + diff_x, rho * l1_norm * l1_specifier)
-                x_new  = x_new / (1 + rho * l2_norm)
+                diff_x = rho * ΔDiff
+                x_new  = soft_threshold(x_new + diff_x, rho * l1_norm * norm_specifier)
+                x_new  = x_new / (1 + rho * l2_norm * norm_specifier)
                 
-                mse = np.sum(ΔLoss ** 2) / num
-                if visible_flg and (idx % 100 == 0):
+                mse = np.sum(ΔLoss ** 2)
+                if visible_flg and (idx % 1000 == 0):
                     update_diff = np.sum(diff_x ** 2)
                     print(f"ite:{idx+1}  mse:{mse}  update_diff:{update_diff} diff:{np.abs(Base_Loss - mse)}")
                 
@@ -1044,6 +1062,8 @@ class Sparse_Vector_Auto_Regressive:
             # 一方で、ラッソ最適化は係数を0にするために利用される手法である
             # そのため、一般にはラッソ最適化を切片に対しては適用しない習慣がある
             # このライブラリもこの習慣に従うことにする
+            # リッジ最適化についても切片に対しては適用しないことにした
+            # これは中心化を行う前と後で、正則化の効果が変動してしまうことを防ぐためである
             # 実装アルゴリズムは一般的なメジャライザー最適化(FISTA: Fast Iterative Shrinkage soft-Thresholding Algorithm)である
             # このアルゴリズムのメジャライザー部分は勾配降下法の更新式に等しい
             # このアルゴリズムを利用する際の注意点として、以下の２つが挙げられる
@@ -1058,20 +1078,19 @@ class Sparse_Vector_Auto_Regressive:
             b            = y_data
             L            = np.linalg.norm(A.T.dot(A), ord="fro")
             x_new        = self.random.random([A.shape[1], b.shape[1]])
-            l1_specifier = np.ones(x_new.shape)
-            l1_specifier[s, :] = 0
+            norm_specifier = np.ones(x_new.shape)
+            norm_specifier[s, :] = 0
             x_k_m_1      = x_new.copy()
             time_k       = 0
-            time_k_a_1   = 0
             Base_Loss    = 0
             for idx in range(0, self.max_iterate):
                 ΔLoss  = b - np.dot(A, x_new)
                 ΔDiff  = np.dot(A.T, ΔLoss)
                 
-                diff_x = ΔDiff / L
                 rho    = 1 / L
-                x_tmp  = soft_threshold(x_new + diff_x, rho * l1_norm * l1_specifier)
-                x_tmp  = x_tmp / (1 + rho * l2_norm)
+                diff_x = rho * ΔDiff
+                x_tmp  = soft_threshold(x_new + diff_x, rho * l1_norm * norm_specifier)
+                x_tmp  = x_tmp / (1 + rho * l2_norm * norm_specifier)
                 
                 time_k_a_1 = (1 + np.sqrt(1 + 4 * (time_k ** 2))) / 2
                 x_new      = x_tmp + (time_k - 1) / (time_k_a_1) * (x_tmp - x_k_m_1)
@@ -1079,12 +1098,13 @@ class Sparse_Vector_Auto_Regressive:
                 time_k  = time_k_a_1
                 x_k_m_1 = x_tmp
                 
-                mse = np.sum(ΔLoss ** 2) / num
-                if visible_flg and (idx % 100 == 0):
+                mse = np.sum(ΔLoss ** 2)
+                if visible_flg and (idx % 1000 == 0):
                     update_diff = np.sum(diff_x ** 2)
                     print(f"ite:{idx+1}  mse:{mse}  update_diff:{update_diff} diff:{np.abs(Base_Loss - mse)}")
                 
                 if (idx != 1) and (np.abs(Base_Loss - mse) <= self.tol):
+                    x_new = x_k_m_1
                     break
                 else:
                     Base_Loss = mse
@@ -1124,9 +1144,9 @@ class Sparse_Vector_Auto_Regressive:
         denominator    = num - 1
         
         self.learn_flg = True
-        if self.isStandardization:
-            y_pred     = self.predict(x_data * self.x_standardization[1] + self.x_standardization[0])
-            diff       = y_data - (y_pred - self.y_standardization[0]) / self.y_standardization[1]
+        if self.isCentralization:
+            y_pred     = self.predict(x_data + self.x_centralization)
+            diff       = y_data - (y_pred - self.y_centralization)
         else:
             y_pred     = self.predict(x_data)
             diff       = y_data -  y_pred
@@ -1147,6 +1167,11 @@ class Sparse_Vector_Auto_Regressive:
         if type(test_data) is list:
             test_data = np.array(test_data)
         
+        if type(test_data) is not np.ndarray:
+            print(f"type(test_data) = {type(test_data)}")
+            print("エラー：：Numpy型である必要があります。")
+            raise
+        
         if test_data.ndim != 2:
             print(f"test_data dims = {test_data.ndim}")
             print("エラー：：次元数が一致しません。")
@@ -1157,12 +1182,12 @@ class Sparse_Vector_Auto_Regressive:
             print("エラー：：学習が完了していません。")
             raise
         
-        if self.isStandardization:
-            test_data = (test_data - self.x_standardization[0]) / self.x_standardization[1]
+        if self.isCentralization:
+            test_data = test_data - self.x_centralization
         
         y_pred = np.dot(test_data, self.alpha) + self.alpha0
-        if self.isStandardization:
-            y_pred = y_pred * self.y_standardization[1] + self.y_standardization[0]
+        if self.isCentralization:
+            y_pred = y_pred + self.y_centralization
         
         return y_pred
     
@@ -1430,6 +1455,11 @@ class Dickey_Fuller_Test:
         if type(test_data) is list:
             test_data = np.array(test_data)
         
+        if type(test_data) is not np.ndarray:
+            print(f"type(test_data) = {type(test_data)}")
+            print("エラー：：Numpy型である必要があります。")
+            raise
+        
         if (test_data.ndim != 2) or (test_data.shape[1] != 1):
             print(f"test_data dims  = {test_data.ndim}")
             print(f"test_data shape = {test_data.shape}")
@@ -1562,6 +1592,11 @@ class Dickey_Fuller_Test:
         if type(time_data) is list:
             time_data = np.array(time_data)
         
+        if type(test_data) is not np.ndarray:
+            print(f"type(test_data) = {type(test_data)}")
+            print("エラー：：Numpy型である必要があります。")
+            raise
+        
         if (test_data.ndim != 2) or (test_data.shape[1] != 1) or (time_data.ndim != 2) or (time_data.shape[1] != 1):
             print(f"test_data dims  = {test_data.ndim}")
             print(f"test_data shape = {test_data.shape}")
@@ -1640,6 +1675,11 @@ class Augmented_Dickey_Fuller_Test:
         
         if type(test_data) is list:
             test_data = np.array(test_data)
+        
+        if type(test_data) is not np.ndarray:
+            print(f"type(test_data) = {type(test_data)}")
+            print("エラー：：Numpy型である必要があります。")
+            raise
         
         if (test_data.ndim != 2) or (test_data.shape[1] != 1):
             print(f"test_data dims  = {test_data.ndim}")
@@ -1780,6 +1820,16 @@ class Augmented_Dickey_Fuller_Test:
         
         if type(time_data) is list:
             time_data = np.array(time_data)
+        
+        if type(test_data) is not np.ndarray:
+            print(f"type(test_data) = {type(test_data)}")
+            print("エラー：：Numpy型である必要があります。")
+            raise
+        
+        if type(time_data) is not np.ndarray:
+            print(f"type(time_data) = {type(time_data)}")
+            print("エラー：：Numpy型である必要があります。")
+            raise
         
         if (test_data.ndim != 2) or (time_data.ndim != 2) or (time_data.shape[1] != 1):
             print(f"test_data dims  = {test_data.ndim}")
