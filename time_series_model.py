@@ -62,7 +62,6 @@ class Update_Rafael:
             self.m = np.zeros(grads.shape)
             self.v = np.zeros(grads.shape)
             self.w = np.zeros(grads.shape)
-            self.isFirst = False
 
         self.m = self.beta1 * self.m + (1 - self.beta1) * grads
         m_hat = self.m / (1 - self.beta1t)
@@ -70,7 +69,11 @@ class Update_Rafael:
         self.v = self.beta2 * self.v + (1 - self.beta2) * (grads ** 2)
         v_hat = self.v / (1 - self.beta2t)
 
-        self.w = self.beta3 * self.w + (1 - self.beta3) * ((grads - m_hat) ** 2)
+        if self.isFirst == True:
+            self.w = self.beta3 * self.w + (1 - self.beta3) * 1
+            self.isFirst = False
+        else:
+            self.w = self.beta3 * self.w + (1 - self.beta3) * ((grads - m_hat) ** 2)
         w_hat = self.w / (1 - self.beta3t)
         
         self.beta1t *= self.beta1
@@ -722,7 +725,7 @@ class Sparse_Vector_Auto_Regressive:
                  norm_α:float=1.0,                   # L1・L2正則化パラメータの強さ
                  l1_ratio:float=0.1,                 # L1・L2正則化の強さ配分・比率
                  tol:float=1e-6,                     # 許容誤差
-                 isCentralization:bool=True,         # 中心化処理の適用有無
+                 isStandardization:bool=True,        # 標準化処理の適用有無
                  max_iterate:int=300000,             # 最大ループ回数
                  random_state=None) -> None:         # 乱数のシード値
         if type(train_data) is pd.core.frame.DataFrame:
@@ -748,9 +751,11 @@ class Sparse_Vector_Auto_Regressive:
         self.sigma               = np.zeros([1, 1])
         self.norm_α              = np.abs(norm_α)
         self.l1_ratio            = np.where(l1_ratio < 0, 0, np.where(l1_ratio > 1, 1, l1_ratio))
-        self.isCentralization    = isCentralization
-        self.x_centralization    = np.empty(1)
-        self.y_centralization    = np.empty(1)
+        self.isStandardization   = isStandardization
+        self.x_mean              = np.zeros([1, 1])
+        self.x_std_dev           = np.ones([1, 1])
+        self.y_mean              = np.zeros([1, 1])
+        self.y_std_dev           = np.ones([1, 1])
         self.tol                 = tol
         self.solver              = ""
         self.data_num            = 0
@@ -776,9 +781,11 @@ class Sparse_Vector_Auto_Regressive:
         buf = buf + [self.sigma.copy()]
         buf = buf + [self.norm_α]
         buf = buf + [self.l1_ratio]
-        buf = buf + [self.isCentralization]
-        buf = buf + [self.x_centralization]
-        buf = buf + [self.y_centralization]
+        buf = buf + [self.isStandardization]
+        buf = buf + [self.x_mean]
+        buf = buf + [self.x_std_dev]
+        buf = buf + [self.y_mean]
+        buf = buf + [self.y_std_dev]
         buf = buf + [self.tol]
         buf = buf + [self.solver]
         buf = buf + [self.data_num]
@@ -800,19 +807,21 @@ class Sparse_Vector_Auto_Regressive:
         self.sigma               = buf[4]
         self.norm_α              = buf[5]
         self.l1_ratio            = buf[6]
-        self.isCentralization    = buf[7]
-        self.x_centralization    = buf[8]
-        self.y_centralization    = buf[9]
-        self.tol                 = buf[10]
-        self.solver              = buf[11]
-        self.data_num            = buf[12]
-        self.max_iterate         = buf[13]
-        self.unbiased_dispersion = buf[14]
-        self.dispersion          = buf[15]
-        self.ma_inf              = buf[16]
-        self.learn_flg           = buf[17]
-        self.random_state        = buf[18]
-        self.random              = buf[19]
+        self.isStandardization   = buf[7]
+        self.x_mean              = buf[8]
+        self.x_std_dev           = buf[9]
+        self.y_mean              = buf[10]
+        self.y_std_dev           = buf[11]
+        self.tol                 = buf[12]
+        self.solver              = buf[13]
+        self.data_num            = buf[14]
+        self.max_iterate         = buf[15]
+        self.unbiased_dispersion = buf[16]
+        self.dispersion          = buf[17]
+        self.ma_inf              = buf[18]
+        self.learn_flg           = buf[19]
+        self.random_state        = buf[20]
+        self.random              = buf[21]
         
         return True
 
@@ -826,11 +835,11 @@ class Sparse_Vector_Auto_Regressive:
         # statsmodels.tsa.vector_ar.var_model.VARではこのような時系列データを入力として与えた場合には
         # エラーを出力するようになっている
         # 本ライブラリにおいてエラーの出力を行わないのは、近似的にでも処理結果が欲しいためである
-        # また、solverとしてISTAを使用する際にも注意が必要である
-        # ISTAは勾配降下法に似た特徴を有しており、対象の最適化パラメータのスケールに弱い
+        # また、solverとしてISTA・FISTAを使用する際にも注意が必要である
+        # ISTA・FISTAは勾配降下法に似た特徴を有しており、対象の最適化パラメータのスケールに弱い
         # 最適化対象のパラメータの解析解のスケールに依存して、必要な更新回数が多くなる
         # スケールが極端に大きい場合などには事実上収束しないが、そもそも解析解のスケールを事前に知らない・気にしていない場合も多い
-        # そのような場合には、教師データ(X, Y)をそれぞれ正規化することで対処できる
+        # そのような場合には、教師データ(X, Y)をそれぞれ標準化することで対処できる
         # isStandardization=True に設定しておくことを強く推奨する
         
         if len(self.train_data) <= offset:
@@ -849,15 +858,29 @@ class Sparse_Vector_Auto_Regressive:
         x_data = np.array([tmp_train_data[t-lags : t][::-1].ravel() for t in range(lags, nobs)])
         y_data = tmp_train_data[lags:]
         
-        # 中心化指定の有無
-        if self.isCentralization:
-            # x軸の正規化
-            self.x_centralization = np.mean(x_data, axis=0)
-            x_data = x_data - self.x_centralization
+        self.lags         = lags
+        data_num, expvars = x_data.shape
+        _,        objvars = y_data.shape
+        
+        # 標準化指定の有無
+        if self.isStandardization:
+            # x軸の標準化
+            self.x_mean    = np.mean(x_data, axis=0)
+            self.x_std_dev = np.std( x_data, axis=0)
+            self.x_std_dev[self.x_std_dev < 1e-32] = 1
+            x_data = (x_data - self.x_mean) / self.x_std_dev
             
-            # y軸の正規化
-            self.y_centralization = np.mean(y_data, axis=0)
-            y_data = y_data - self.y_centralization
+            # y軸の標準化
+            self.y_mean    = np.mean(y_data, axis=0)
+            self.y_std_dev = np.std( y_data, axis=0)
+            self.y_std_dev[self.y_std_dev < 1e-32] = 1
+            y_data = (y_data - self.y_mean) / self.y_std_dev
+        else:
+            self.x_mean    = np.zeros(expvars)
+            self.x_std_dev = np.ones( expvars)
+            self.y_mean    = np.zeros(objvars)
+            self.y_std_dev = np.ones( objvars)
+            
         
         # 本ライブラリで実装されているアルゴリズムは以下の4点となる
         # ・sklearnライブラリに実装されているElasticNet(外部ライブラリ)
@@ -874,6 +897,8 @@ class Sparse_Vector_Auto_Regressive:
         # 一方で、この外部ライブラリはC言語(Cython)を利用してチューニングが行われている
         # また広く公開され、多くの人に利用されているライブラリでもあるため速度・品質ともにレベルが高い
         # 探索解の品質を保証したいのであれば、外部ライブラリの利用を強く推奨する
+        # 一方で、外部ライブラリはデータの標準化処理に対応していない点に注意する必要がある
+        # データの標準化処理を行う場合にはL1・L2正則化項の調整を行う必要があるが、外部ライブラリでは行うことができないためである
         # 最後に広く認められているわけではないため使用の際には注意が必要であるが、本ライブラリにて実装済みの
         # これら3種類のアルゴリズムが想定する目的関数は以下のとおり
         # A = 説明変数x + 切片b の行列(データ数n ✖️ (説明変数数s + 1))
@@ -890,35 +915,41 @@ class Sparse_Vector_Auto_Regressive:
         # 参考までに各オプションごとの実行速度は以下の通り
         # external library  >>  FISTA  >>  ISTA  >>  coordinate descent
         
-        self.lags = lags
-        num, s    = x_data.shape
         if   solver == "external library":
-            model = ElasticNet(alpha=self.norm_α, l1_ratio=self.l1_ratio.tolist(), max_iter=self.max_iterate, tol=self.tol)
+            # ElasticNetの外部ライブラリである
+            # ラッソ最適化(L1正則化)とリッジ最適化(L2正則化)を行なっている
+            # このオプションではsklearnに実装されているモデルに処理を投げることを行なっている
+            # 注意点として、データの標準化処理には対応していないことが挙げられる
+            # 仮に標準化処理付きでこのオプションが選択された場合には、簡易的な正則化項の調整を行うことにしている
+            # しかし、この調整は非常に簡素なものであり厳密性に欠ける
+            # このオプションを利用する際には、標準化処理を行わないことを強く推奨する
+            tmp_alpha = self.norm_α * np.mean(self.y_std_dev) / np.mean(self.x_std_dev)
+            model = ElasticNet(alpha=tmp_alpha.tolist(), l1_ratio=self.l1_ratio.tolist(), max_iter=self.max_iterate, tol=self.tol)
             model.fit(x_data, y_data)
             
             self.alpha, self.alpha0 = model.coef_.T, model.intercept_
             self.alpha0 = self.alpha0.reshape([1, y_data.shape[1]])
             
             if visible_flg:
-                l1_norm = self.norm_α * self.l1_ratio       * num
-                l2_norm = self.norm_α * (1 - self.l1_ratio) * num
-                A       = np.hstack([x_data, np.ones([num, 1])])
+                l1_norm = self.norm_α * self.l1_ratio       * data_num
+                l2_norm = self.norm_α * (1 - self.l1_ratio) * data_num
+                A       = np.hstack([x_data, np.ones([data_num, 1])])
                 B       = y_data
                 X       = np.vstack([self.alpha, self.alpha0])
                 DIFF = B - np.dot(A, X)
                 DIFF = np.dot(DIFF.T, DIFF)
                 SQUA = np.dot(X.T, X)
-                SQUA[B.shape[1]-1, B.shape[1]-1] = 0
+                SQUA[objvars-1, objvars-1] = 0
                 ABSO = np.abs(X)
-                ABSO[s, :] = 0
+                ABSO[expvars, :] = 0
                 OBJE = 1 / 2 * np.sum(np.diag(DIFF)) + l2_norm / 2 * np.sum(np.diag(SQUA)) + l1_norm * np.sum(ABSO)
-                print("平均二乗誤差(MSE):", np.sum(np.diag(DIFF)) / num, flush=True)
+                print("平均二乗誤差(MSE):", np.sum(np.diag(DIFF)) / data_num, flush=True)
                 print("L2正則化項(l2 norm):", np.sum(np.diag(SQUA)))
                 print("L1正則化項(l1 norm):", np.sum(ABSO))
                 print("目的関数(Objective): ", OBJE)
                 
-                X     = np.vstack([self.alpha, np.zeros([1, B.shape[1]])])
-                DLoss = np.dot(A.T, B) - l1_norm * np.sign(X) - np.dot(np.dot(A.T, A) + l2_norm * np.identity(s + 1), X)
+                X     = np.vstack([self.alpha, np.zeros([1, objvars])])
+                DLoss = np.dot(A.T, B) - l1_norm * np.sign(X) - np.dot(np.dot(A.T, A) + l2_norm * np.identity(expvars + 1), X)
                 print("目的関数(Objective)の微分: ", np.abs(DLoss).sum())
             
         elif solver == "coordinate descent":
@@ -929,68 +960,70 @@ class Sparse_Vector_Auto_Regressive:
             # そのため、一般にはラッソ最適化を切片に対しては適用しない習慣がある
             # このライブラリもこの習慣に従うことにする
             # リッジ最適化についても切片に対しては適用しないことにした
-            # これは中心化を行う前と後で、正則化の効果が変動してしまうことを防ぐためである
+            # これは標準化を行う前と後で、正則化の効果が変動してしまうことを防ぐためである
             # 実装アルゴリズムは座標降下法である
             # できる限り高速に処理を行いたかったので、このような実装になった
             # このアルゴリズムの計算量は、O(ループ回数 × 説明変数の数 × O(行列積))である
             # 1×M, M×Lの大きさを持つ行列A, Bを想定すると、行列積の計算量はO(ML)となる
             # このSVARライブラリではそれぞれ、M=(説明変数の数 + 1) L=目的変数の数に対応している
             # 計算量オーダーを書き直すと O(ループ回数 × 説明変数の数 × ML)となる
-            # このアルゴリズムを利用するにあたって、学習対象データの正規化などの条件は特にない
-            l1_norm = self.norm_α * self.l1_ratio       * num
-            l2_norm = self.norm_α * (1 - self.l1_ratio) * num
-            A       = np.hstack([x_data, np.ones([num, 1])])
+            # このアルゴリズムを利用するにあたって、学習対象データの標準化などの条件は特にない
+            # しかし多くの場合において、標準化処理を施してある学習データに対する学習速度は早い
+            # その意味で標準化処理を推奨する
+            l1_norm = self.norm_α * self.l1_ratio       * data_num
+            l2_norm = self.norm_α * (1 - self.l1_ratio) * data_num
+            A       = np.hstack([x_data, np.ones([data_num, 1])])
             b       = y_data
             
-            L2NORM = l2_norm * np.identity(s + 1)
-            L2NORM[s, s] = 0
+            L2NORM = l2_norm * np.identity(expvars + 1)
+            L2NORM[0:expvars, 0:expvars] = L2NORM[0:expvars, 0:expvars] / np.square(self.x_std_dev.reshape([1, expvars]))
+            L2NORM[expvars,   expvars]   = 0
             L = np.dot(A.T, A) + L2NORM
             R = np.dot(A.T, b)
             D = np.diag(np.diag(L))
             G = np.diag(L)
             C = L - D
             
-            x_new = np.zeros([s + 1, b.shape[1]])
+            x_new = np.zeros([expvars + 1, objvars])
             for idx1 in range(0, self.max_iterate):
                 x_old = x_new.copy()
                 
-                x_new[s, :] = (R[s, :] - np.dot(C[s, :], x_new)) / G[s]
-                for idx3 in range(0, s):
-                    tmp = R[idx3, :] - np.dot(C[idx3, :], x_new)
-                    x_new[idx3, :] = soft_threshold(tmp, l1_norm) / G[idx3]
+                x_new[expvars, :] = (R[expvars, :] - np.dot(C[expvars, :], x_new)) / G[expvars]
+                for idx2 in range(0, expvars):
+                    tmp = R[idx2, :] - np.dot(C[idx2, :], x_new)
+                    x_new[idx2, :] = soft_threshold(tmp, l1_norm / self.x_std_dev[idx2] / self.y_std_dev) / G[idx2]
                 
-                ΔDiff = np.sqrt(np.sum((x_new - x_old) ** 2))
+                ΔDiff = np.sum((x_new - x_old) ** 2) / data_num
                 if visible_flg and (idx1 % 1000 == 0):
-                    mse = np.sum(ΔDiff ** 2) / num
-                    print(f"ite:{idx1+1}  mse:{mse}  ΔDiff:{ΔDiff}")
+                    print(f"ite:{idx1+1}  ΔDiff:{ΔDiff}")
                 
                 if ΔDiff <= self.tol:
                     break
             
             x = x_new
-            self.alpha, self.alpha0 = x[0:s, :], x[s, :]
+            self.alpha, self.alpha0 = x[0:expvars, :], x[expvars, :]
             self.alpha0 = self.alpha0.reshape([1, x.shape[1]])
             
             if visible_flg:
-                l1_norm = self.norm_α * self.l1_ratio       * num
-                l2_norm = self.norm_α * (1 - self.l1_ratio) * num
-                A       = np.hstack([x_data, np.ones([num, 1])])
+                l1_norm = self.norm_α * self.l1_ratio       * data_num
+                l2_norm = self.norm_α * (1 - self.l1_ratio) * data_num
+                A       = np.hstack([x_data, np.ones([data_num, 1])])
                 B       = y_data
                 X       = np.vstack([self.alpha, self.alpha0])
                 DIFF = B - np.dot(A, X)
                 DIFF = np.dot(DIFF.T, DIFF)
                 SQUA = np.dot(X.T, X)
-                SQUA[B.shape[1]-1, B.shape[1]-1] = 0
+                SQUA[objvars-1, objvars-1] = 0
                 ABSO = np.abs(X)
-                ABSO[s, :] = 0
+                ABSO[expvars, :] = 0
                 OBJE = 1 / 2 * np.sum(np.diag(DIFF)) + l2_norm / 2 * np.sum(np.diag(SQUA)) + l1_norm * np.sum(ABSO)
-                print("平均二乗誤差(MSE):", np.sum(np.diag(DIFF)) / num, flush=True)
+                print("平均二乗誤差(MSE):", np.sum(np.diag(DIFF)) / data_num, flush=True)
                 print("L2正則化項(l2 norm):", np.sum(np.diag(SQUA)))
                 print("L1正則化項(l1 norm):", np.sum(ABSO))
                 print("目的関数(Objective): ", OBJE)
                 
-                X     = np.vstack([self.alpha, np.zeros([1, B.shape[1]])])
-                DLoss = np.dot(A.T, B) - l1_norm * np.sign(X) - np.dot(np.dot(A.T, A) + l2_norm * np.identity(s + 1), X)
+                X     = np.vstack([self.alpha, np.zeros([1, objvars])])
+                DLoss = np.dot(A.T, B) - l1_norm * np.sign(X) - np.dot(np.dot(A.T, A) + l2_norm * np.identity(expvars + 1), X)
                 print("目的関数(Objective)の微分: ", np.abs(DLoss).sum())
             
         elif solver == "ISTA":
@@ -1001,23 +1034,27 @@ class Sparse_Vector_Auto_Regressive:
             # そのため、一般にはラッソ最適化を切片に対しては適用しない習慣がある
             # このライブラリもこの習慣に従うことにする
             # リッジ最適化についても切片に対しては適用しないことにした
-            # これは中心化を行う前と後で、正則化の効果が変動してしまうことを防ぐためである
+            # これは標準化を行う前と後で、正則化の効果が変動してしまうことを防ぐためである
             # 実装アルゴリズムは一般的なメジャライザー最適化(ISTA: Iterative Shrinkage soft-Thresholding Algorithm)である
             # このアルゴリズムのメジャライザー部分は勾配降下法の更新式に等しい
             # このアルゴリズムを利用する際の注意点として、以下の２つが挙げられる
-            # ・教師データ(X, Y)がそれぞれ正規化されている必要があること
+            # ・教師データ(X, Y)がそれぞれ標準化されている必要があること
             # ・設定イレーション回数が十分でない場合に、大域的最適解への収束が保証できないこと
-            # 正規化されていない場合にはうまく収束しないくなる等、アルゴリズムが機能しなくなる可能性がある
+            # 標準化されていない場合にはうまく収束しないくなる等、アルゴリズムが機能しなくなる可能性がある
             # isStandardization=True に設定しておけば、問題ない
             
-            l1_norm      = self.norm_α * self.l1_ratio       * num
-            l2_norm      = self.norm_α * (1 - self.l1_ratio) * num
-            A            = np.hstack([x_data, np.ones([num, 1])])
+            l1_norm      = self.norm_α * self.l1_ratio       * data_num
+            l2_norm      = self.norm_α * (1 - self.l1_ratio) * data_num
+            A            = np.hstack([x_data, np.ones([data_num, 1])])
             b            = y_data
             L            = np.linalg.norm(A.T.dot(A), ord="fro")
             x_new        = self.random.random([A.shape[1], b.shape[1]])
-            norm_specifier = np.ones(x_new.shape)
-            norm_specifier[s, :] = 0
+            l1_specifier = np.ones(x_new.shape)
+            l2_specifier = np.ones(x_new.shape)
+            l1_specifier[0:expvars, :] = l1_specifier[0:expvars, :] / self.x_std_dev.reshape([expvars, 1])            / self.y_std_dev.reshape([1, objvars])
+            l2_specifier[0:expvars, :] = l2_specifier[0:expvars, :] / np.square(self.x_std_dev.reshape([expvars, 1]))
+            l1_specifier[expvars,   :] = 0
+            l2_specifier[expvars,   :] = 0
             Base_Loss    = 0
             for idx in range(0, self.max_iterate):
                 ΔLoss  = b - np.dot(A, x_new)
@@ -1025,8 +1062,8 @@ class Sparse_Vector_Auto_Regressive:
                 
                 rho    = 1 / L
                 diff_x = rho * ΔDiff
-                x_new  = soft_threshold(x_new + diff_x, rho * l1_norm * norm_specifier)
-                x_new  = x_new / (1 + rho * l2_norm * norm_specifier)
+                x_new  = soft_threshold(x_new + diff_x, rho * l1_norm * l1_specifier)
+                x_new  = x_new / (1 + rho * l2_norm * l2_specifier)
                 
                 mse = np.sum(ΔLoss ** 2)
                 if visible_flg and (idx % 1000 == 0):
@@ -1039,29 +1076,29 @@ class Sparse_Vector_Auto_Regressive:
                     Base_Loss = mse
             
             x = x_new
-            self.alpha, self.alpha0 = x[0:s, :], x[s, :]
+            self.alpha, self.alpha0 = x[0:expvars, :], x[expvars, :]
             self.alpha0 = self.alpha0.reshape([1, x.shape[1]])
             
             if visible_flg:
-                l1_norm = self.norm_α * self.l1_ratio       * num
-                l2_norm = self.norm_α * (1 - self.l1_ratio) * num
-                A       = np.hstack([x_data, np.ones([num, 1])])
+                l1_norm = self.norm_α * self.l1_ratio       * data_num
+                l2_norm = self.norm_α * (1 - self.l1_ratio) * data_num
+                A       = np.hstack([x_data, np.ones([data_num, 1])])
                 B       = y_data
                 X       = np.vstack([self.alpha, self.alpha0])
                 DIFF = B - np.dot(A, X)
                 DIFF = np.dot(DIFF.T, DIFF)
                 SQUA = np.dot(X.T, X)
-                SQUA[B.shape[1]-1, B.shape[1]-1] = 0
+                SQUA[objvars-1, objvars-1] = 0
                 ABSO = np.abs(X)
-                ABSO[s, :] = 0
+                ABSO[expvars, :] = 0
                 OBJE = 1 / 2 * np.sum(np.diag(DIFF)) + l2_norm / 2 * np.sum(np.diag(SQUA)) + l1_norm * np.sum(ABSO)
-                print("平均二乗誤差(MSE):", np.sum(np.diag(DIFF)) / num, flush=True)
+                print("平均二乗誤差(MSE):", np.sum(np.diag(DIFF)) / data_num, flush=True)
                 print("L2正則化項(l2 norm):", np.sum(np.diag(SQUA)))
                 print("L1正則化項(l1 norm):", np.sum(ABSO))
                 print("目的関数(Objective): ", OBJE)
                 
-                X     = np.vstack([self.alpha, np.zeros([1, B.shape[1]])])
-                DLoss = np.dot(A.T, B) - l1_norm * np.sign(X) - np.dot(np.dot(A.T, A) + l2_norm * np.identity(s + 1), X)
+                X     = np.vstack([self.alpha, np.zeros([1, objvars])])
+                DLoss = np.dot(A.T, B) - l1_norm * np.sign(X) - np.dot(np.dot(A.T, A) + l2_norm * np.identity(expvars + 1), X)
                 print("目的関数(Objective)の微分: ", np.abs(DLoss).sum())
         
         elif solver == "FISTA":
@@ -1072,23 +1109,27 @@ class Sparse_Vector_Auto_Regressive:
             # そのため、一般にはラッソ最適化を切片に対しては適用しない習慣がある
             # このライブラリもこの習慣に従うことにする
             # リッジ最適化についても切片に対しては適用しないことにした
-            # これは中心化を行う前と後で、正則化の効果が変動してしまうことを防ぐためである
+            # これは標準化を行う前と後で、正則化の効果が変動してしまうことを防ぐためである
             # 実装アルゴリズムは一般的なメジャライザー最適化(FISTA: Fast Iterative Shrinkage soft-Thresholding Algorithm)である
             # このアルゴリズムのメジャライザー部分は勾配降下法の更新式に等しい
             # このアルゴリズムを利用する際の注意点として、以下の２つが挙げられる
-            # ・教師データ(X, Y)がそれぞれ正規化されている必要があること
+            # ・教師データ(X, Y)がそれぞれ標準化されている必要があること
             # ・設定イレーション回数が十分でない場合に、大域的最適解への収束が保証できないこと
-            # 正規化されていない場合にはうまく収束しないくなる等、アルゴリズムが機能しなくなる可能性がある
+            # 標準化されていない場合にはうまく収束しないくなる等、アルゴリズムが機能しなくなる可能性がある
             # isStandardization=True に設定しておけば、問題ない
             
-            l1_norm      = self.norm_α * self.l1_ratio       * num
-            l2_norm      = self.norm_α * (1 - self.l1_ratio) * num
-            A            = np.hstack([x_data, np.ones([num, 1])])
+            l1_norm      = self.norm_α * self.l1_ratio       * data_num
+            l2_norm      = self.norm_α * (1 - self.l1_ratio) * data_num
+            A            = np.hstack([x_data, np.ones([data_num, 1])])
             b            = y_data
             L            = np.linalg.norm(A.T.dot(A), ord="fro")
             x_new        = self.random.random([A.shape[1], b.shape[1]])
-            norm_specifier = np.ones(x_new.shape)
-            norm_specifier[s, :] = 0
+            l1_specifier = np.ones(x_new.shape)
+            l2_specifier = np.ones(x_new.shape)
+            l1_specifier[0:expvars, :] = l1_specifier[0:expvars, :] / self.x_std_dev.reshape([expvars, 1])            / self.y_std_dev.reshape([1, objvars])
+            l2_specifier[0:expvars, :] = l2_specifier[0:expvars, :] / np.square(self.x_std_dev.reshape([expvars, 1]))
+            l1_specifier[expvars,   :] = 0
+            l2_specifier[expvars,   :] = 0
             x_k_m_1      = x_new.copy()
             time_k       = 0
             Base_Loss    = 0
@@ -1098,8 +1139,8 @@ class Sparse_Vector_Auto_Regressive:
                 
                 rho    = 1 / L
                 diff_x = rho * ΔDiff
-                x_tmp  = soft_threshold(x_new + diff_x, rho * l1_norm * norm_specifier)
-                x_tmp  = x_tmp / (1 + rho * l2_norm * norm_specifier)
+                x_tmp  = soft_threshold(x_new + diff_x, rho * l1_norm * l1_specifier)
+                x_tmp  = x_tmp / (1 + rho * l2_norm * l2_specifier)
                 
                 time_k_a_1 = (1 + np.sqrt(1 + 4 * (time_k ** 2))) / 2
                 x_new      = x_tmp + (time_k - 1) / (time_k_a_1) * (x_tmp - x_k_m_1)
@@ -1119,29 +1160,29 @@ class Sparse_Vector_Auto_Regressive:
                     Base_Loss = mse
             
             x = x_new
-            self.alpha, self.alpha0 = x[0:s, :], x[s, :]
+            self.alpha, self.alpha0 = x[0:expvars, :], x[expvars, :]
             self.alpha0 = self.alpha0.reshape([1, x.shape[1]])
             
             if visible_flg:
-                l1_norm = self.norm_α * self.l1_ratio       * num
-                l2_norm = self.norm_α * (1 - self.l1_ratio) * num
-                A       = np.hstack([x_data, np.ones([num, 1])])
+                l1_norm = self.norm_α * self.l1_ratio       * data_num
+                l2_norm = self.norm_α * (1 - self.l1_ratio) * data_num
+                A       = np.hstack([x_data, np.ones([data_num, 1])])
                 B       = y_data
                 X       = np.vstack([self.alpha, self.alpha0])
                 DIFF = B - np.dot(A, X)
                 DIFF = np.dot(DIFF.T, DIFF)
                 SQUA = np.dot(X.T, X)
-                SQUA[B.shape[1]-1, B.shape[1]-1] = 0
+                SQUA[objvars-1, objvars-1] = 0
                 ABSO = np.abs(X)
-                ABSO[s, :] = 0
+                ABSO[expvars, :] = 0
                 OBJE = 1 / 2 * np.sum(np.diag(DIFF)) + l2_norm / 2 * np.sum(np.diag(SQUA)) + l1_norm * np.sum(ABSO)
-                print("平均二乗誤差(MSE):", np.sum(np.diag(DIFF)) / num, flush=True)
+                print("平均二乗誤差(MSE):", np.sum(np.diag(DIFF)) / data_num, flush=True)
                 print("L2正則化項(l2 norm):", np.sum(np.diag(SQUA)))
                 print("L1正則化項(l1 norm):", np.sum(ABSO))
                 print("目的関数(Objective): ", OBJE)
                 
-                X     = np.vstack([self.alpha, np.zeros([1, B.shape[1]])])
-                DLoss = np.dot(A.T, B) - l1_norm * np.sign(X) - np.dot(np.dot(A.T, A) + l2_norm * np.identity(s + 1), X)
+                X     = np.vstack([self.alpha, np.zeros([1, objvars])])
+                DLoss = np.dot(A.T, B) - l1_norm * np.sign(X) - np.dot(np.dot(A.T, A) + l2_norm * np.identity(expvars + 1), X)
                 print("目的関数(Objective)の微分: ", np.abs(DLoss).sum())
             
         else:
@@ -1153,12 +1194,12 @@ class Sparse_Vector_Auto_Regressive:
         # この状況下では、母数が負の値になってしまうため採用することができない
         # そのため、苦肉の策として 母数 = 学習データ数 - 1 を採用することにした。根拠は弱い。
         # 今後、このような状況での最適な不偏共分散行列の求め方が判明したならば積極的に変更を加えることとする
-        denominator    = num - 1
+        denominator    = data_num - 1
         
         self.learn_flg = True
-        if self.isCentralization:
-            y_pred     = self.predict(x_data + self.x_centralization)
-            diff       = y_data - (y_pred - self.y_centralization)
+        if self.isStandardization:
+            y_pred     = self.predict(x_data * self.x_std_dev + self.x_mean)
+            diff       = y_data - (y_pred - self.y_mean) / self.y_std_dev
         else:
             y_pred     = self.predict(x_data)
             diff       = y_data -  y_pred
@@ -1166,7 +1207,7 @@ class Sparse_Vector_Auto_Regressive:
         
         self.sigma     = np.dot(diff.T, diff) / denominator
         self.solver    = solver
-        self.data_num  = num
+        self.data_num  = data_num
         self.unbiased_dispersion = denominator
         self.dispersion          = y_data.shape[0]
 
@@ -1194,12 +1235,12 @@ class Sparse_Vector_Auto_Regressive:
             print("エラー：：学習が完了していません。")
             raise
         
-        if self.isCentralization:
-            test_data = test_data - self.x_centralization
+        if self.isStandardization:
+            test_data = (test_data - self.x_mean) / self.x_std_dev
         
         y_pred = np.dot(test_data, self.alpha) + self.alpha0
-        if self.isCentralization:
-            y_pred = y_pred + self.y_centralization
+        if self.isStandardization:
+            y_pred = y_pred * self.y_std_dev + self.y_mean
         
         return y_pred
     
@@ -1353,8 +1394,8 @@ class Sparse_Vector_Auto_Regressive:
         tmp_train_data = backup[0]
         tmp_lags       = backup[1]
         tmp_alpha      = backup[2]
-        tmp_solver     = backup[11]
-        tmp_data_num   = backup[12]
+        tmp_solver     = backup[13]
+        tmp_data_num   = backup[14]
 
         self.fit(lags=tmp_lags, solver=tmp_solver)
         rss1 = self.get_RSS()[caused]
