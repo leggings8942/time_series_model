@@ -38,6 +38,24 @@ def normal_distribution(x, loc=0, scale=1):
 def multivariate_normal_distrubution(x, mean, cov):
     return stats.multivariate_normal(mean=mean, cov=cov, allow_singular=True).pdf(x)
 
+def log_likelihood_of_normal_distrubution(x, mean, cov):
+    assert x.shape == mean.shape,        f"argument sizes do not match:: x.shape = {x.shape}, mean.shape = {mean.shape}"
+    assert cov.shape[0] == cov.shape[1], f"covariance matrix must be square:: cov.shape[0] = {cov.shape[0]}, cov.shape[1] = {cov.shape[1]}"
+    assert x.shape[0] == cov.shape[0],   f"number of dimensions of convariance matrix and input vector do not match:: x.shape[0] = {x.shape[0]}, cov.shape[0] = {cov.shape[0]}"
+    
+    try:
+        diff  = x - mean
+        sigma = np.linalg.solve(cov, diff)
+    except Exception as e:
+        diff  = x - mean
+        sigma = np.dot(np.linalg.pinv(cov), diff)
+    finally:
+        mult  = np.dot(diff.T, sigma)
+    
+    d              = x.shape[0]
+    log_likelihood = d * np.log(2 * np.pi) + np.log(np.abs(np.linalg.det(cov)) + 1e-64) + mult
+    return -log_likelihood / 2
+
 # 軟判別閾値関数
 def soft_threshold(x, α):
     return np.sign(x) * np.maximum(np.abs(x) - α, 0)
@@ -324,7 +342,6 @@ class Vector_Auto_Regressive:
         self.solver              = ""
         self.data_num            = 0
         self.max_iterate         = max_iterate
-        self.correct_alpha       = Update_Rafael(alpha=learning_rate)
         self.unbiased_dispersion = 0
         self.dispersion          = 0
         self.ma_inf              = np.zeros([1, 1])
@@ -348,7 +365,6 @@ class Vector_Auto_Regressive:
         buf = buf + [self.solver]
         buf = buf + [self.data_num]
         buf = buf + [self.max_iterate]
-        buf = buf + [self.correct_alpha]
         buf = buf + [self.unbiased_dispersion]
         buf = buf + [self.dispersion]
         buf = buf + [self.ma_inf.copy()]
@@ -368,13 +384,12 @@ class Vector_Auto_Regressive:
         self.solver              = buf[6]
         self.data_num            = buf[7]
         self.max_iterate         = buf[8]
-        self.correct_alpha       = buf[9]
-        self.unbiased_dispersion = buf[10]
-        self.dispersion          = buf[11]
-        self.ma_inf              = buf[12]
-        self.learn_flg           = buf[13]
-        self.random_state        = buf[14]
-        self.random              = buf[15]
+        self.unbiased_dispersion = buf[9]
+        self.dispersion          = buf[10]
+        self.ma_inf              = buf[11]
+        self.learn_flg           = buf[12]
+        self.random_state        = buf[13]
+        self.random              = buf[14]
         
         return True
 
@@ -491,20 +506,18 @@ class Vector_Auto_Regressive:
         nobs   = len(self.train_data)
         x_data = np.array([self.train_data[t-self.lags : t][::-1].ravel() for t in range(self.lags, nobs)])
         y_data = self.train_data[self.lags:]
-
-        num, _ = y_data.shape
         y_pred = self.predict(x_data)
 
         # 不偏推定共分散量を通常の推定共分散量に直す
         tmp_sigma      = self.sigma * self.unbiased_dispersion / self.dispersion
         
-        prob           = [multivariate_normal_distrubution(y_data[idx, :], y_pred[idx, :], tmp_sigma) for idx in range(0, num)]
-        prob           = np.array(prob).reshape([num, 1])
-        log_likelihood = np.sum(np.log(prob + 1e-32))
+        log_likelihood = log_likelihood_of_normal_distrubution(y_data, y_pred, tmp_sigma)
+        log_likelihood = np.diag(log_likelihood)
+        log_likelihood = np.sum(log_likelihood)
 
         return log_likelihood
     
-    def model_reliability(self, ic="aic") -> np.float64:
+    def model_reliability(self, ic="aic", allow_singular:bool=True) -> np.float64:
         # statsmodels.tsa.vector_ar.var_model.VARResults を参照のこと
         # info_criteria関数内にて当該の記述を発見
         # 赤池情報基準やベイズ情報基準をはじめとした情報基準が特殊な形に変形されている
@@ -518,7 +531,6 @@ class Vector_Auto_Regressive:
         
         num = self.data_num
         k   = self.alpha.size + self.alpha0.size
-        #log_likelihood = self.log_likelihood()
         
         # caution!!!
         # 本ライブラリでは、データ数に対して最尤推定対象が多い場合にもできる限り処理を続けるように調整してある
@@ -532,18 +544,22 @@ class Vector_Auto_Regressive:
         # 不偏推定共分散量を通常の推定共分散量に直す
         tmp_sigma = self.sigma * self.unbiased_dispersion / self.dispersion
         det_sigma = np.linalg.det(tmp_sigma)
-        det_sigma = det_sigma if det_sigma != 0 else 1e-16
+        
+        if allow_singular or det_sigma == 0:
+            log_likelihood = -2 * self.log_likelihood() / num
+        else:
+            log_likelihood = np.log(np.abs(det_sigma))
 
         inf = 0
         if ic == "aic":
             #inf = -2 * log_likelihood + 2 * k
-            inf = np.log(np.abs(det_sigma)) + 2 * k / num
+            inf = log_likelihood + 2 * k / num
         elif ic == "bic":
             #inf = -2 * log_likelihood + k * np.log(num)
-            inf = np.log(np.abs(det_sigma)) + k * np.log(num) / num
+            inf = log_likelihood + k * np.log(num) / num
         elif ic == "hqic":
             #inf = -2 * log_likelihood + 2 * k * np.log(np.log(num))
-            inf = np.log(np.abs(det_sigma)) + 2 * k * np.log(np.log(num)) / num
+            inf = log_likelihood + 2 * k * np.log(np.log(num)) / num
         else:
             raise
 
@@ -1272,20 +1288,18 @@ class Sparse_Vector_Auto_Regressive:
         nobs   = len(self.train_data)
         x_data = np.array([self.train_data[t-self.lags : t][::-1].ravel() for t in range(self.lags, nobs)])
         y_data = self.train_data[self.lags:]
-
-        num, _ = y_data.shape
         y_pred = self.predict(x_data)
 
         # 不偏推定共分散量を通常の推定共分散量に直す
         tmp_sigma      = self.sigma * self.unbiased_dispersion / self.dispersion
         
-        prob           = [multivariate_normal_distrubution(y_data[idx, :], y_pred[idx, :], tmp_sigma) for idx in range(0, num)]
-        prob           = np.array(prob).reshape([num, 1])
-        log_likelihood = np.sum(np.log(prob + 1e-32))
+        log_likelihood = log_likelihood_of_normal_distrubution(y_data, y_pred, tmp_sigma)
+        log_likelihood = np.diag(log_likelihood)
+        log_likelihood = np.sum(log_likelihood)
 
         return log_likelihood
     
-    def model_reliability(self, ic="aic") -> np.float64:
+    def model_reliability(self, ic:str="aic", allow_singular:bool=True) -> np.float64:
         # statsmodels.tsa.vector_ar.var_model.VARResults を参照のこと
         # info_criteria関数内にて当該の記述を発見
         # 赤池情報基準やベイズ情報基準をはじめとした情報基準が特殊な形に変形されている
@@ -1299,7 +1313,6 @@ class Sparse_Vector_Auto_Regressive:
         
         num = self.data_num
         k   = self.alpha.size + self.alpha0.size
-        #log_likelihood = self.log_likelihood()
         
         # caution!!!
         # 本ライブラリでは、データ数に対して最尤推定対象が多い場合にもできる限り処理を続けるように調整してある
@@ -1313,18 +1326,22 @@ class Sparse_Vector_Auto_Regressive:
         # 不偏推定共分散量を通常の推定共分散量に直す
         tmp_sigma = self.sigma * self.unbiased_dispersion / self.dispersion
         det_sigma = np.linalg.det(tmp_sigma)
-        det_sigma = det_sigma if det_sigma != 0 else 1e-16
+        
+        if allow_singular or det_sigma == 0:
+            log_likelihood = -2 * self.log_likelihood() / num
+        else:
+            log_likelihood = np.log(np.abs(det_sigma))
 
         inf = 0
         if ic == "aic":
             #inf = -2 * log_likelihood + 2 * k
-            inf = np.log(np.abs(det_sigma)) + 2 * k / num
+            inf = log_likelihood + 2 * k / num
         elif ic == "bic":
             #inf = -2 * log_likelihood + k * np.log(num)
-            inf = np.log(np.abs(det_sigma)) + k * np.log(num) / num
+            inf = log_likelihood + k * np.log(num) / num
         elif ic == "hqic":
             #inf = -2 * log_likelihood + 2 * k * np.log(np.log(num))
-            inf = np.log(np.abs(det_sigma)) + 2 * k * np.log(np.log(num)) / num
+            inf = log_likelihood + 2 * k * np.log(np.log(num)) / num
         else:
             raise
 
