@@ -1331,7 +1331,7 @@ class Sparse_Vector_Auto_Regressive:
         if allow_singular or (det_sigma < 1e-64):
             log_likelihood = -2 * self.log_likelihood() / num
         else:
-            log_likelihood = np.log(np.abs(det_sigma))
+            log_likelihood = np.log(det_sigma)
 
         inf = 0
         if ic == "aic":
