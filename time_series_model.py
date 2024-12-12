@@ -542,25 +542,19 @@ class Vector_Auto_Regressive:
         # 参考URL:
         # https://seetheworld1992.hatenablog.com/entry/2017/03/22/194932
         
-        # 不偏推定共分散量を通常の推定共分散量に直す
-        tmp_sigma = self.sigma * self.unbiased_dispersion / self.dispersion
-        det_sigma = np.abs(np.linalg.det(tmp_sigma))
-        
-        if allow_singular or (det_sigma < 1e-64):
-            log_likelihood = -2 * self.log_likelihood() / num
-        else:
-            log_likelihood = np.log(det_sigma)
+        # 対数尤度の計算
+        log_likelihood = -2 * self.log_likelihood()
 
         inf = 0
         if ic == "aic":
             #inf = -2 * log_likelihood + 2 * k
-            inf = log_likelihood + 2 * k / num
+            inf = log_likelihood / num + 2 * k / num
         elif ic == "bic":
             #inf = -2 * log_likelihood + k * np.log(num)
-            inf = log_likelihood + k * np.log(num) / num
+            inf = log_likelihood / num + k * np.log(num) / num
         elif ic == "hqic":
             #inf = -2 * log_likelihood + 2 * k * np.log(np.log(num))
-            inf = log_likelihood + 2 * k * np.log(np.log(num)) / num
+            inf = log_likelihood / num + 2 * k * np.log(np.log(num)) / num
         else:
             raise
 
@@ -1324,25 +1318,19 @@ class Sparse_Vector_Auto_Regressive:
         # 参考URL:
         # https://seetheworld1992.hatenablog.com/entry/2017/03/22/194932
         
-        # 不偏推定共分散量を通常の推定共分散量に直す
-        tmp_sigma = self.sigma * self.unbiased_dispersion / self.dispersion
-        det_sigma = np.abs(np.linalg.det(tmp_sigma))
-        
-        if allow_singular or (det_sigma < 1e-64):
-            log_likelihood = -2 * self.log_likelihood() / num
-        else:
-            log_likelihood = np.log(det_sigma)
+        # 対数尤度の計算
+        log_likelihood = -2 * self.log_likelihood()
 
         inf = 0
         if ic == "aic":
             #inf = -2 * log_likelihood + 2 * k
-            inf = log_likelihood + 2 * k / num
+            inf = log_likelihood / num + 2 * k / num
         elif ic == "bic":
             #inf = -2 * log_likelihood + k * np.log(num)
-            inf = log_likelihood + k * np.log(num) / num
+            inf = log_likelihood / num + k * np.log(num) / num
         elif ic == "hqic":
             #inf = -2 * log_likelihood + 2 * k * np.log(np.log(num))
-            inf = log_likelihood + 2 * k * np.log(np.log(num)) / num
+            inf = log_likelihood / num + 2 * k * np.log(np.log(num)) / num
         else:
             raise
 
