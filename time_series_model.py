@@ -51,6 +51,7 @@ def log_likelihood_of_normal_distrubution(x, mean, cov):
         sigma = np.dot(np.linalg.pinv(cov), diff)
     finally:
         mult  = np.dot(diff.T, sigma)
+        mult  = np.abs(mult)
     
     d              = x.shape[0]
     log_likelihood = d * np.log(2 * np.pi) + np.log(np.abs(np.linalg.det(cov)) + 1e-64) + mult
@@ -511,7 +512,7 @@ class Vector_Auto_Regressive:
         # 不偏推定共分散量を通常の推定共分散量に直す
         tmp_sigma      = self.sigma * self.unbiased_dispersion / self.dispersion
         
-        log_likelihood = log_likelihood_of_normal_distrubution(y_data, y_pred, tmp_sigma)
+        log_likelihood = log_likelihood_of_normal_distrubution(y_data.T, y_pred.T, tmp_sigma)
         log_likelihood = np.diag(log_likelihood)
         log_likelihood = np.sum(log_likelihood)
 
@@ -543,12 +544,12 @@ class Vector_Auto_Regressive:
         
         # 不偏推定共分散量を通常の推定共分散量に直す
         tmp_sigma = self.sigma * self.unbiased_dispersion / self.dispersion
-        det_sigma = np.linalg.det(tmp_sigma)
+        det_sigma = np.abs(np.linalg.det(tmp_sigma))
         
-        if allow_singular or det_sigma == 0:
+        if allow_singular or (det_sigma < 1e-64):
             log_likelihood = -2 * self.log_likelihood() / num
         else:
-            log_likelihood = np.log(np.abs(det_sigma))
+            log_likelihood = np.log(det_sigma)
 
         inf = 0
         if ic == "aic":
@@ -1293,7 +1294,7 @@ class Sparse_Vector_Auto_Regressive:
         # 不偏推定共分散量を通常の推定共分散量に直す
         tmp_sigma      = self.sigma * self.unbiased_dispersion / self.dispersion
         
-        log_likelihood = log_likelihood_of_normal_distrubution(y_data, y_pred, tmp_sigma)
+        log_likelihood = log_likelihood_of_normal_distrubution(y_data.T, y_pred.T, tmp_sigma)
         log_likelihood = np.diag(log_likelihood)
         log_likelihood = np.sum(log_likelihood)
 
@@ -1325,9 +1326,9 @@ class Sparse_Vector_Auto_Regressive:
         
         # 不偏推定共分散量を通常の推定共分散量に直す
         tmp_sigma = self.sigma * self.unbiased_dispersion / self.dispersion
-        det_sigma = np.linalg.det(tmp_sigma)
+        det_sigma = np.abs(np.linalg.det(tmp_sigma))
         
-        if allow_singular or det_sigma == 0:
+        if allow_singular or (det_sigma < 1e-64):
             log_likelihood = -2 * self.log_likelihood() / num
         else:
             log_likelihood = np.log(np.abs(det_sigma))
