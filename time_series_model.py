@@ -52,6 +52,7 @@ def log_likelihood_of_normal_distrubution(x, mean, cov):
     finally:
         mult  = np.dot(diff.T, sigma)
         mult  = np.abs(mult)
+        mult  = np.diag(mult)
     
     d              = x.shape[0]
     log_likelihood = d * np.log(2 * np.pi) + np.log(np.abs(np.linalg.det(cov)) + 1e-64) + mult
@@ -513,12 +514,11 @@ class Vector_Auto_Regressive:
         tmp_sigma      = self.sigma * self.unbiased_dispersion / self.dispersion
         
         log_likelihood = log_likelihood_of_normal_distrubution(y_data.T, y_pred.T, tmp_sigma)
-        log_likelihood = np.diag(log_likelihood)
         log_likelihood = np.sum(log_likelihood)
 
         return log_likelihood
     
-    def model_reliability(self, ic="aic", allow_singular:bool=True) -> np.float64:
+    def model_reliability(self, ic="aic") -> np.float64:
         # statsmodels.tsa.vector_ar.var_model.VARResults を参照のこと
         # info_criteria関数内にて当該の記述を発見
         # 赤池情報基準やベイズ情報基準をはじめとした情報基準が特殊な形に変形されている
@@ -1284,17 +1284,20 @@ class Sparse_Vector_Auto_Regressive:
         x_data = np.array([self.train_data[t-self.lags : t][::-1].ravel() for t in range(self.lags, nobs)])
         y_data = self.train_data[self.lags:]
         y_pred = self.predict(x_data)
+        
+        if self.isStandardization:
+            y_data = (y_data - self.y_mean) / self.y_std_dev
+            y_pred = (y_pred - self.y_mean) / self.y_std_dev
 
         # 不偏推定共分散量を通常の推定共分散量に直す
         tmp_sigma      = self.sigma * self.unbiased_dispersion / self.dispersion
         
         log_likelihood = log_likelihood_of_normal_distrubution(y_data.T, y_pred.T, tmp_sigma)
-        log_likelihood = np.diag(log_likelihood)
         log_likelihood = np.sum(log_likelihood)
 
         return log_likelihood
     
-    def model_reliability(self, ic:str="aic", allow_singular:bool=True) -> np.float64:
+    def model_reliability(self, ic:str="aic") -> np.float64:
         # statsmodels.tsa.vector_ar.var_model.VARResults を参照のこと
         # info_criteria関数内にて当該の記述を発見
         # 赤池情報基準やベイズ情報基準をはじめとした情報基準が特殊な形に変形されている
