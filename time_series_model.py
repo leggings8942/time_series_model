@@ -45,17 +45,17 @@ def log_likelihood_of_normal_distrubution(x, mean, cov):
     
     try:
         diff  = x - mean
-        sigma = np.linalg.solve(cov, diff)
+        sigma = np.dot(np.linalg.pinv(cov), diff)
     except Exception as e:
         diff  = x - mean
-        sigma = np.dot(np.linalg.pinv(cov), diff)
+        sigma = np.linalg.solve(cov, diff)
     finally:
         mult  = np.dot(diff.T, sigma)
         mult  = np.abs(mult)
         mult  = np.diag(mult)
     
     d              = x.shape[0]
-    log_likelihood = d * np.log(2 * np.pi) + np.log(np.abs(np.linalg.det(cov)) + 1e-64) + mult
+    log_likelihood = d * np.log(2 * np.pi) + np.log(np.abs(np.linalg.det(cov)) + 1e-256) + mult
     return -log_likelihood / 2
 
 # 軟判別閾値関数
@@ -168,10 +168,10 @@ class Auto_Regressive:
             A = np.hstack([x_data, np.ones([num, 1])])
             b = y_data
             try:
+                x = np.dot(np.linalg.pinv(np.dot(A.T, A)), np.dot(A.T, b))
+            except np.linalg.LinAlgError as e:
                 # x = np.dot(np.linalg.inv( np.dot(A.T, A)), np.dot(A.T, b))
                 x = np.linalg.solve(np.dot(A.T, A), np.dot(A.T, b))
-            except np.linalg.LinAlgError as e:
-                x = np.dot(np.linalg.pinv(np.dot(A.T, A)), np.dot(A.T, b))
             
             self.alpha, self.alpha0 = x[0:s], x[s]
         else:
@@ -424,10 +424,10 @@ class Vector_Auto_Regressive:
             A = np.hstack([x_data, np.ones([num, 1])])
             b = y_data
             try:
+                x = np.dot(np.linalg.pinv(np.dot(A.T, A)), np.dot(A.T, b))
+            except np.linalg.LinAlgError as e:
                 # x = np.dot(np.linalg.inv( np.dot(A.T, A)), np.dot(A.T, b))
                 x = np.linalg.solve(np.dot(A.T, A), np.dot(A.T, b))
-            except np.linalg.LinAlgError as e:
-                x = np.dot(np.linalg.pinv(np.dot(A.T, A)), np.dot(A.T, b))
                 
             self.alpha, self.alpha0 = x[0:s, :], x[s, :]
             self.alpha0 = self.alpha0.reshape([1, x.shape[1]])
@@ -490,6 +490,9 @@ class Vector_Auto_Regressive:
         rss = np.square(y_data - y_pred)
         rss = np.sum(rss, axis=0)
         return rss
+    
+    def get_coefficient(self) -> tuple[np.ndarray[np.float64], np.ndarray[np.float64]]:
+        return self.alpha0, self.alpha
     
     def log_likelihood(self) -> np.float64:
         # なぜか、対数尤度の計算に特殊な計算方法が採用されている
@@ -1266,6 +1269,9 @@ class Sparse_Vector_Auto_Regressive:
         rss = np.sum(rss, axis=0)
         return rss
     
+    def get_coefficient(self) -> tuple[np.ndarray[np.float64], np.ndarray[np.float64]]:
+        return self.alpha0, self.alpha
+    
     def log_likelihood(self) -> np.float64:
         # なぜか、対数尤度の計算に特殊な計算方法が採用されている
         # statsmodels.tsa.vector_ar.var_model を参照のこと
@@ -1570,10 +1576,10 @@ class Dickey_Fuller_Test:
             A = x_data
             b = y_data
             try:
+                x = np.dot(np.linalg.pinv(np.dot(A.T, A)), np.dot(A.T, b))
+            except np.linalg.LinAlgError as e:
                 # x = np.dot(np.linalg.inv( np.dot(A.T, A)), np.dot(A.T, b))
                 x = np.linalg.solve(np.dot(A.T, A), np.dot(A.T, b))
-            except np.linalg.LinAlgError as e:
-                x = np.dot(np.linalg.pinv(np.dot(A.T, A)), np.dot(A.T, b))
             
             self.alpha,     self.alpha0    = x[0:s, :], np.zeros([1, x.shape[1]])
             self.trend_1st, self.trend_2nd = np.zeros([1, x.shape[1]]), np.zeros([1, x.shape[1]])
@@ -1582,10 +1588,10 @@ class Dickey_Fuller_Test:
             A = np.hstack([x_data, np.ones([num, 1])])
             b = y_data
             try:
+                x = np.dot(np.linalg.pinv(np.dot(A.T, A)), np.dot(A.T, b))
+            except np.linalg.LinAlgError as e:
                 # x = np.dot(np.linalg.inv( np.dot(A.T, A)), np.dot(A.T, b))
                 x = np.linalg.solve(np.dot(A.T, A), np.dot(A.T, b))
-            except np.linalg.LinAlgError as e:
-                x = np.dot(np.linalg.pinv(np.dot(A.T, A)), np.dot(A.T, b))
             
             self.alpha,     self.alpha0    = x[0:s, :], x[s, :]
             self.trend_1st, self.trend_2nd = np.zeros([1, x.shape[1]]), np.zeros([1, x.shape[1]])
@@ -1594,10 +1600,10 @@ class Dickey_Fuller_Test:
             A = np.hstack([x_data, np.ones([num, 1]), np.arange(1, num+1).reshape([num, 1])])
             b = y_data
             try:
+                x = np.dot(np.linalg.pinv(np.dot(A.T, A)), np.dot(A.T, b))
+            except np.linalg.LinAlgError as e:
                 # x = np.dot(np.linalg.inv( np.dot(A.T, A)), np.dot(A.T, b))
                 x = np.linalg.solve(np.dot(A.T, A), np.dot(A.T, b))
-            except np.linalg.LinAlgError as e:
-                x = np.dot(np.linalg.pinv(np.dot(A.T, A)), np.dot(A.T, b))
             
             self.alpha,     self.alpha0    = x[0:s, :], x[s, :]
             self.trend_1st, self.trend_2nd = x[s+1, :], np.zeros([1, x.shape[1]])
@@ -1606,10 +1612,10 @@ class Dickey_Fuller_Test:
             A = np.hstack([x_data, np.ones([num, 1]), np.arange(1, num+1).reshape([num, 1]), np.arange(1, num+1).reshape([num, 1]) ** 2])
             b = y_data
             try:
+                x = np.dot(np.linalg.pinv(np.dot(A.T, A)), np.dot(A.T, b))
+            except np.linalg.LinAlgError as e:
                 # x = np.dot(np.linalg.inv( np.dot(A.T, A)), np.dot(A.T, b))
                 x = np.linalg.solve(np.dot(A.T, A), np.dot(A.T, b))
-            except np.linalg.LinAlgError as e:
-                x = np.dot(np.linalg.pinv(np.dot(A.T, A)), np.dot(A.T, b))
             
             self.alpha,     self.alpha0    = x[0:s, :], x[s, :]
             self.trend_1st, self.trend_2nd = x[s+1, :], x[s+2, :]
@@ -1797,10 +1803,10 @@ class Augmented_Dickey_Fuller_Test:
             A = x_data
             b = y_data
             try:
+                x = np.dot(np.linalg.pinv(np.dot(A.T, A)), np.dot(A.T, b))
+            except np.linalg.LinAlgError as e:
                 # x = np.dot(np.linalg.inv( np.dot(A.T, A)), np.dot(A.T, b))
                 x = np.linalg.solve(np.dot(A.T, A), np.dot(A.T, b))
-            except np.linalg.LinAlgError as e:
-                x = np.dot(np.linalg.pinv(np.dot(A.T, A)), np.dot(A.T, b))
             
             self.alpha,     self.alpha0    = x[0:s, :], np.zeros([1, x.shape[1]])
             self.trend_1st, self.trend_2nd = np.zeros([1, x.shape[1]]), np.zeros([1, x.shape[1]])
@@ -1809,10 +1815,10 @@ class Augmented_Dickey_Fuller_Test:
             A = np.hstack([x_data, np.ones([num, 1])])
             b = y_data
             try:
+                x = np.dot(np.linalg.pinv(np.dot(A.T, A)), np.dot(A.T, b))
+            except np.linalg.LinAlgError as e:
                 # x = np.dot(np.linalg.inv( np.dot(A.T, A)), np.dot(A.T, b))
                 x = np.linalg.solve(np.dot(A.T, A), np.dot(A.T, b))
-            except np.linalg.LinAlgError as e:
-                x = np.dot(np.linalg.pinv(np.dot(A.T, A)), np.dot(A.T, b))
             
             self.alpha,     self.alpha0    = x[0:s, :], x[s, :]
             self.trend_1st, self.trend_2nd = np.zeros([1, x.shape[1]]), np.zeros([1, x.shape[1]])
@@ -1821,10 +1827,10 @@ class Augmented_Dickey_Fuller_Test:
             A = np.hstack([x_data, np.ones([num, 1]), np.arange(1, num+1).reshape([num, 1])])
             b = y_data
             try:
+                x = np.dot(np.linalg.pinv(np.dot(A.T, A)), np.dot(A.T, b))
+            except np.linalg.LinAlgError as e:
                 # x = np.dot(np.linalg.inv( np.dot(A.T, A)), np.dot(A.T, b))
                 x = np.linalg.solve(np.dot(A.T, A), np.dot(A.T, b))
-            except np.linalg.LinAlgError as e:
-                x = np.dot(np.linalg.pinv(np.dot(A.T, A)), np.dot(A.T, b))
             
             self.alpha,     self.alpha0    = x[0:s, :], x[s, :]
             self.trend_1st, self.trend_2nd = x[s+1, :], np.zeros([1, x.shape[1]])
@@ -1833,10 +1839,10 @@ class Augmented_Dickey_Fuller_Test:
             A = np.hstack([x_data, np.ones([num, 1]), np.arange(1, num+1).reshape([num, 1]), np.arange(1, num+1).reshape([num, 1]) ** 2])
             b = y_data
             try:
+                x = np.dot(np.linalg.pinv(np.dot(A.T, A)), np.dot(A.T, b))
+            except np.linalg.LinAlgError as e:
                 # x = np.dot(np.linalg.inv( np.dot(A.T, A)), np.dot(A.T, b))
                 x = np.linalg.solve(np.dot(A.T, A), np.dot(A.T, b))
-            except np.linalg.LinAlgError as e:
-                x = np.dot(np.linalg.pinv(np.dot(A.T, A)), np.dot(A.T, b))
             
             self.alpha,     self.alpha0    = x[0:s, :], x[s, :]
             self.trend_1st, self.trend_2nd = x[s+1, :], x[s+2, :]
