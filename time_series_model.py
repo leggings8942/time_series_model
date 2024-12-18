@@ -47,8 +47,10 @@ def log_likelihood_of_normal_distrubution(x, mean, cov):
         diff  = x - mean
         sigma = np.dot(np.linalg.pinv(cov), diff)
     except Exception as e:
-        diff  = x - mean
-        sigma = np.linalg.solve(cov, diff)
+        try:
+            sigma = np.linalg.solve(cov, diff)
+        except Exception as e:
+            sigma = np.zeros_like(diff)
     finally:
         mult  = np.dot(diff.T, sigma)
         mult  = np.abs(mult)
@@ -1444,6 +1446,17 @@ class Sparse_Vector_Auto_Regressive:
         return self.ma_inf
 
     def irf(self, period=30, orth=False, isStdDevShock=True):
+        # caution!!!
+        # もしもself.isStandardization=Trueであればインパルス応答関数の計算結果は、そのまま解釈することができない
+        # なぜならば、標準化されたデータ列に対して推定された係数を元にインパルス応答関数を計算するからである
+        # また、標準化の影響を打ち消すような処理を係数やインパルス応答関数の結果そのものに適用する事ができないため
+        # 特にデータ列ごとに分散量が1になるように正規化されているので、各次元同士の影響量も比較することができない
+        # この場合に有効な見方は「各データ列が正規化されている場合のインパルス応答関数の結果」であって、
+        # 「各データ列が生データのままな場合のインパルス応答関数の結果」ではない
+        # 他方で、self.isStandardization=Trueであればインパルス応答関数の計算結果が数値として利用価値が低いという訳でもない
+        # 各列(各変数)ごとのスケールの違いによる最尤推定量のバイアスが発生せず、変数間の本質的な相互影響量を計算できるためである
+        # スケールの情報自体に意味がある場合を除いて、標準化されたインパルス応答関数の結果に意味はある
+        
         if not self.learn_flg:
             print(f"learn_flg = {self.learn_flg}")
             print("エラー：：学習が完了していません。")
@@ -1478,6 +1491,17 @@ class Sparse_Vector_Auto_Regressive:
         return irf
     
     def fevd(self, period=30):
+        # caution!!!
+        # もしもself.isStandardization=Trueであれば分散分解の計算結果は、そのまま解釈することができない
+        # なぜならば、標準化されたデータ列に対して推定された係数を元に分散分解を計算するからである
+        # また、標準化の影響を打ち消すような処理を係数や分散分解の結果そのものに適用する事ができないため
+        # 特にデータ列ごとに分散量が1になるように正規化されているので、各次元同士の影響量も比較することができない
+        # この場合に有効な見方は「各データ列が正規化されている場合の分散分解の結果」であって、
+        # 「各データ列が生データのままな場合の分散分解の結果」ではない
+        # 他方で、self.isStandardization=Trueであれば分散分解の計算結果が数値として利用価値が低いという訳でもない
+        # 各列(各変数)ごとのスケールの違いによる最尤推定量のバイアスが発生せず、変数間の本質的な相互影響量を計算できるためである
+        # スケールの情報自体に意味がある場合を除いて、標準化された分散分解の結果に意味はある
+        
         if not self.learn_flg:
             print(f"learn_flg = {self.learn_flg}")
             print("エラー：：学習が完了していません。")
