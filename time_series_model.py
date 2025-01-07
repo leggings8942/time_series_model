@@ -496,7 +496,7 @@ class Vector_Auto_Regressive:
     def get_coefficient(self) -> tuple[np.ndarray[np.float64], np.ndarray[np.float64]]:
         return self.alpha0, self.alpha
     
-    def log_likelihood(self) -> np.float64:
+    def log_likelihood(self, offset=0) -> np.float64:
         # なぜか、対数尤度の計算に特殊な計算方法が採用されている
         # statsmodels.tsa.vector_ar.var_model を参照のこと
         # var_loglike関数内にて当該の記述を発見
@@ -510,9 +510,11 @@ class Vector_Auto_Regressive:
             print("エラー：：学習が完了していません。")
             raise
         
-        nobs   = len(self.train_data)
-        x_data = np.array([self.train_data[t-self.lags : t][::-1].ravel() for t in range(self.lags, nobs)])
-        y_data = self.train_data[self.lags:]
+        tmp_train_data = self.train_data[offset:]
+        nobs           = len(tmp_train_data)
+        
+        x_data = np.array([tmp_train_data[t-self.lags : t][::-1].ravel() for t in range(self.lags, nobs)])
+        y_data = tmp_train_data[self.lags:]
         y_pred = self.predict(x_data)
 
         # 不偏推定共分散量を通常の推定共分散量に直す
@@ -523,7 +525,7 @@ class Vector_Auto_Regressive:
 
         return log_likelihood
     
-    def model_reliability(self, ic="aic") -> np.float64:
+    def model_reliability(self, ic="aic", offset=0) -> np.float64:
         # statsmodels.tsa.vector_ar.var_model.VARResults を参照のこと
         # info_criteria関数内にて当該の記述を発見
         # 赤池情報基準やベイズ情報基準をはじめとした情報基準が特殊な形に変形されている
@@ -548,7 +550,7 @@ class Vector_Auto_Regressive:
         # https://seetheworld1992.hatenablog.com/entry/2017/03/22/194932
         
         # 対数尤度の計算
-        log_likelihood = -2 * self.log_likelihood()
+        log_likelihood = -2 * self.log_likelihood(offset=offset)
 
         inf = 0
         if ic == "aic":
@@ -578,7 +580,7 @@ class Vector_Auto_Regressive:
             flg = self.fit(lags=lag, offset=maxlag - lag, solver=solver)
             
             if flg:
-                rel = self.model_reliability(ic=ic)
+                rel = self.model_reliability(ic=ic, offset=maxlag - lag)
                 model_param.append([rel, lag])
             else:
                 rel = np.finfo(np.float64).max
@@ -1274,7 +1276,7 @@ class Sparse_Vector_Auto_Regressive:
     def get_coefficient(self) -> tuple[np.ndarray[np.float64], np.ndarray[np.float64]]:
         return self.alpha0, self.alpha
     
-    def log_likelihood(self) -> np.float64:
+    def log_likelihood(self, offset=0) -> np.float64:
         # なぜか、対数尤度の計算に特殊な計算方法が採用されている
         # statsmodels.tsa.vector_ar.var_model を参照のこと
         # var_loglike関数内にて当該の記述を発見
@@ -1288,9 +1290,11 @@ class Sparse_Vector_Auto_Regressive:
             print("エラー：：学習が完了していません。")
             raise
         
-        nobs   = len(self.train_data)
-        x_data = np.array([self.train_data[t-self.lags : t][::-1].ravel() for t in range(self.lags, nobs)])
-        y_data = self.train_data[self.lags:]
+        tmp_train_data = self.train_data[offset:]
+        nobs           = len(tmp_train_data)
+        
+        x_data = np.array([tmp_train_data[t-self.lags : t][::-1].ravel() for t in range(self.lags, nobs)])
+        y_data = tmp_train_data[self.lags:]
         y_pred = self.predict(x_data)
         
         if self.isStandardization:
@@ -1305,7 +1309,7 @@ class Sparse_Vector_Auto_Regressive:
 
         return log_likelihood
     
-    def model_reliability(self, ic:str="aic") -> np.float64:
+    def model_reliability(self, ic:str="aic", offset=0) -> np.float64:
         # statsmodels.tsa.vector_ar.var_model.VARResults を参照のこと
         # info_criteria関数内にて当該の記述を発見
         # 赤池情報基準やベイズ情報基準をはじめとした情報基準が特殊な形に変形されている
@@ -1330,7 +1334,7 @@ class Sparse_Vector_Auto_Regressive:
         # https://seetheworld1992.hatenablog.com/entry/2017/03/22/194932
         
         # 対数尤度の計算
-        log_likelihood = -2 * self.log_likelihood()
+        log_likelihood = -2 * self.log_likelihood(offset=offset)
 
         inf = 0
         if ic == "aic":
@@ -1360,7 +1364,7 @@ class Sparse_Vector_Auto_Regressive:
             flg = self.fit(lags=lag, offset=maxlag - lag, solver=solver)
             
             if flg:
-                rel = self.model_reliability(ic=ic)
+                rel = self.model_reliability(ic=ic, offset=maxlag - lag)
                 model_param.append([rel, lag])
             else:
                 rel = np.finfo(np.float64).max
@@ -1455,7 +1459,7 @@ class Sparse_Vector_Auto_Regressive:
         # 「各データ列が生データのままな場合のインパルス応答関数の結果」ではない
         # 他方で、self.isStandardization=Trueであればインパルス応答関数の計算結果が数値として利用価値が低いという訳でもない
         # 各列(各変数)ごとのスケールの違いによる最尤推定量のバイアスが発生せず、変数間の本質的な相互影響量を計算できるためである
-        # スケールの情報自体に意味がある場合を除いて、標準化されたインパルス応答関数の結果に意味はある
+        # スケールの復元は行なっているが、標準化されていない場合の計算結果とは一致しないことに注意
         
         if not self.learn_flg:
             print(f"learn_flg = {self.learn_flg}")
@@ -1487,6 +1491,9 @@ class Sparse_Vector_Auto_Regressive:
 
         else:
             irf = self.ma_replace(period)
+        
+        if self.isStandardization and orth and isStdDevShock:
+            irf = irf * self.y_std_dev.T
 
         return irf
     
@@ -1500,7 +1507,7 @@ class Sparse_Vector_Auto_Regressive:
         # 「各データ列が生データのままな場合の分散分解の結果」ではない
         # 他方で、self.isStandardization=Trueであれば分散分解の計算結果が数値として利用価値が低いという訳でもない
         # 各列(各変数)ごとのスケールの違いによる最尤推定量のバイアスが発生せず、変数間の本質的な相互影響量を計算できるためである
-        # スケールの情報自体に意味がある場合を除いて、標準化された分散分解の結果に意味はある
+        # 分散分解の場合には最終的に1に正規化されるため、スケールの復元はあえて行わないことにする
         
         if not self.learn_flg:
             print(f"learn_flg = {self.learn_flg}")
