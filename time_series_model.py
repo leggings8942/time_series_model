@@ -1644,18 +1644,10 @@ class Non_Negative_Vector_Auto_Regressive:
         
         return True
 
-    def fit(self, lags:int=1, offset:int=0, solver="normal equations", visible_flg:bool=False) -> bool:
+    def fit(self, lags:int=1, offset:int=0, solver="Nesterov Accelerateed Gradient", visible_flg:bool=False) -> bool:
         # caution!!!
-        # OLS(Ordinary Learst Squares)推定量を計算する際に
-        # 擬似逆行列(pinv関数)を使用している箇所が存在する
-        # この処理は逆行列が存在しない場合(行列式が0の場合)に発火する
-        # しかし理論的には逆行列が存在しない時系列データの組み合わせは極めて稀である(無視できる)
-        # 入力された時系列データ自体にミスが存在する(0の定数列になっている等)可能性が高い
-        # statsmodels.tsa.vector_ar.var_model.VARではこのような時系列データを入力として与えた場合には
-        # エラーを出力するようになっている
-        # 本ライブラリにおいてエラーの出力を行わないのは、近似的にでも処理結果が欲しいためである
-        # また、solverとしてISTA・FISTAを使用する際にも注意が必要である
-        # ISTA・FISTAは勾配降下法に似た特徴を有しており、対象の最適化パラメータのスケールに弱い
+        # solverとして最急降下法を使用する際に注意が必要である
+        # 勾配降下法は、対象の最適化パラメータのスケールに弱い
         # 最適化対象のパラメータの解析解のスケールに依存して、必要な更新回数が多くなる
         # スケールが極端に大きい場合などには事実上収束しないが、そもそも解析解のスケールを事前に知らない・気にしていない場合も多い
         # そのような場合には、教師データ(X, Y)をそれぞれ標準化することで対処できる
@@ -1702,77 +1694,38 @@ class Non_Negative_Vector_Auto_Regressive:
 
         
         # 本ライブラリで実装されているアルゴリズムは以下の4点となる
-        # ・sklearnライブラリに実装されているElasticNet(外部ライブラリ)
-        # ・座標降下法アルゴリズム(CD: Coordinate Descent Algorithm)
-        # ・メジャライザー最適化( ISTA: Iterative Shrinkage soft-Thresholding Algorithm)
-        # ・メジャライザー最適化(FISTA: Fast Iterative Shrinkage soft-Thresholding Algorithm)
+        # ・勾配降下法(GD: Gradient Descent)
+        # ・ネステロフの加速勾配法(NAG: Nesterov Accelerateed Gradient)
         # これらのアルゴリズムは全て同じ目的関数を最適化している
-        # しかし、実際に同一のパラメータでパラメータ探索をさせても同一の解は得られない
-        # これは、実装の細かな違いによるものであったり、解析解ではなく近似解が得られるためであったりする
-        # 特にISTAは勾配降下法と同等の性質を有しているため、異なる近似解が得られる
-        # すなわち実行のたびに異なる解が導かれるかつ極所最適解に落ち着くことがある
-        # また、外部ライブラリとしてsklearn.linear_model.ElasticNetを利用することもできる
-        # この外部ライブラリは内部で座標降下法で探索を行っている点で本ライブラリと同等である
-        # 一方で、この外部ライブラリはC言語(Cython)を利用してチューニングが行われている
-        # また広く公開され、多くの人に利用されているライブラリでもあるため速度・品質ともにレベルが高い
-        # 探索解の品質を保証したいのであれば、外部ライブラリの利用を強く推奨する
-        # 一方で、外部ライブラリはデータの標準化処理に対応していない点に注意する必要がある
-        # データの標準化処理を行う場合にはL1・L2正則化項の調整を行う必要があるが、外部ライブラリでは行うことができないためである
-        # 最後に広く認められているわけではないため使用の際には注意が必要であるが、本ライブラリにて実装済みの
-        # これら3種類のアルゴリズムが想定する目的関数は以下のとおり
+        # 広く認められているわけではないため使用の際には注意が必要であるが、本ライブラリにて実装済みの
+        # これら2種類のアルゴリズムが想定する目的関数は以下のとおり
         # A = 説明変数x + 切片b の行列(データ数n ✖️ (説明変数数s + 1))
         # B = 目的変数y の行列(データ数n ✖️ 目的変数数m)
         # X = 説明変数xの係数 + 切片bの係数 の行列((説明変数数s + 1) ✖️ 目的変数数m)
-        # λ_1 = 正則化の強度 * l1_ratio
-        # λ_2 = 正則化の強度 * (1 - l1_ratio)
         # math: \begin{equation}
         # math: \begin{split}
-        # math: Objective &= \frac{1}{n} \| B - AX \|_2^2 + \frac{λ_2}{2} \| X \|_2^2 + λ_1 \|X\|_1 \\
-        # math: &= tr [ \left( B - AX \right) ^T \left( B - AX \right) ] + \frac{λ_2 n}{2} tr [ X^T X ] + λ_1 n \sum_{i=1} |x_i |
+        # math: Objective &= \frac{1}{n} \| B - AX \|_2^2 \\
+        # math: &= tr [ \left( B - AX \right) ^T \left( B - AX \right) ]
         # math: \end{split}
         # math: \end{equation}
         # 参考までに各オプションごとの実行速度は以下の通り
-        # external library  >>  FISTA  >>  ISTA  >>  coordinate descent
+        # NAG  >>  GD
 
-        
-        if   solver == "ISTA":
-            # ラッソ最適化(L1正則化)とリッジ最適化(L2正則化)を行なっている
-            # 注意点として、切片に対してはラッソ最適化を行わないことが挙げられる
-            # リッジ最適化は一般に係数を0にするためではなく、最適化対象のパラメータ全体を小さく保つために利用される
-            # 一方で、ラッソ最適化は係数を0にするために利用される手法である
-            # そのため、一般にはラッソ最適化を切片に対しては適用しない習慣がある
-            # このライブラリもこの習慣に従うことにする
-            # リッジ最適化についても切片に対しては適用しないことにした
-            # これは標準化を行う前と後で、正則化の効果が変動してしまうことを防ぐためである
-            # 実装アルゴリズムは一般的なメジャライザー最適化(ISTA: Iterative Shrinkage soft-Thresholding Algorithm)である
-            # このアルゴリズムのメジャライザー部分は勾配降下法の更新式に等しい
-            # このアルゴリズムを利用する際の注意点として、以下の２つが挙げられる
-            # ・教師データ(X, Y)がそれぞれ標準化されている必要があること
-            # ・設定イレーション回数が十分でない場合に、大域的最適解への収束が保証できないこと
-            # 標準化されていない場合にはうまく収束しないくなる等、アルゴリズムが機能しなくなる可能性がある
-            # isStandardization=True に設定しておけば、問題ない
-            
-            l1_norm      = self.norm_α * self.l1_ratio       * data_num
-            l2_norm      = self.norm_α * (1 - self.l1_ratio) * data_num
+
+        if   solver == "Gradient Descent":
             A            = np.hstack([x_data, np.ones([data_num, 1])])
             b            = y_data
             L            = np.linalg.norm(A.T.dot(A), ord="fro")
             x_new        = self.random.random([A.shape[1], b.shape[1]])
-            l1_specifier = np.ones(x_new.shape)
-            l2_specifier = np.ones(x_new.shape)
-            l1_specifier[0:expvars, :] = l1_specifier[0:expvars, :] / self.x_std_dev.reshape([expvars, 1])            / self.y_std_dev.reshape([1, objvars])
-            l2_specifier[0:expvars, :] = l2_specifier[0:expvars, :] / np.square(self.x_std_dev.reshape([expvars, 1]))
-            l1_specifier[expvars,   :] = 0
-            l2_specifier[expvars,   :] = 0
             Base_Loss    = 0
             for idx in range(0, self.max_iterate):
-                ΔLoss  = b - np.dot(A, x_new)
-                ΔDiff  = np.dot(A.T, ΔLoss)
+                ΔEXPX  = np.exp(x_new)
+                ΔLoss  = b - np.dot(A, ΔEXPX)
+                ΔDiff  = np.dot(A.T, ΔLoss) * ΔEXPX
                 
                 rho    = 1 / L
                 diff_x = rho * ΔDiff
-                x_new  = soft_threshold(x_new + diff_x, rho * l1_norm * l1_specifier)
-                x_new  = x_new / (1 + rho * l2_norm * l2_specifier)
+                x_new  = x_new + diff_x
                 
                 mse = np.sum(ΔLoss ** 2)
                 if visible_flg and (idx % 1000 == 0):
@@ -1789,67 +1742,31 @@ class Non_Negative_Vector_Auto_Regressive:
             self.alpha0 = self.alpha0.reshape([1, x.shape[1]])
             
             if visible_flg:
-                l1_norm = self.norm_α * self.l1_ratio       * data_num
-                l2_norm = self.norm_α * (1 - self.l1_ratio) * data_num
                 A       = np.hstack([x_data, np.ones([data_num, 1])])
                 B       = y_data
                 X       = np.vstack([self.alpha, self.alpha0])
-                DIFF = B - np.dot(A, X)
+                DIFF = B - np.dot(A, np.exp(X))
                 DIFF = np.dot(DIFF.T, DIFF)
-                SQUA = np.dot(X.T, X)
-                SQUA[objvars-1, objvars-1] = 0
-                ABSO = np.abs(X)
-                ABSO[expvars, :] = 0
-                OBJE = 1 / 2 * np.sum(np.diag(DIFF)) + l2_norm / 2 * np.sum(np.diag(SQUA)) + l1_norm * np.sum(ABSO)
+                OBJE = 1 / 2 * np.sum(np.diag(DIFF))
                 print("平均二乗誤差(MSE):", np.sum(np.diag(DIFF)) / data_num, flush=True)
-                print("L2正則化項(l2 norm):", np.sum(np.diag(SQUA)))
-                print("L1正則化項(l1 norm):", np.sum(ABSO))
                 print("目的関数(Objective): ", OBJE)
-                
-                X     = np.vstack([self.alpha, np.zeros([1, objvars])])
-                DLoss = np.dot(A.T, B) - l1_norm * np.sign(X) - np.dot(np.dot(A.T, A) + l2_norm * np.identity(expvars + 1), X)
-                print("目的関数(Objective)の微分: ", np.abs(DLoss).sum())
         
-        elif solver == "FISTA":
-            # ラッソ最適化(L1正則化)とリッジ最適化(L2正則化)を行なっている
-            # 注意点として、切片に対してはラッソ最適化を行わないことが挙げられる
-            # リッジ最適化は一般に係数を0にするためではなく、最適化対象のパラメータ全体を小さく保つために利用される
-            # 一方で、ラッソ最適化は係数を0にするために利用される手法である
-            # そのため、一般にはラッソ最適化を切片に対しては適用しない習慣がある
-            # このライブラリもこの習慣に従うことにする
-            # リッジ最適化についても切片に対しては適用しないことにした
-            # これは標準化を行う前と後で、正則化の効果が変動してしまうことを防ぐためである
-            # 実装アルゴリズムは一般的なメジャライザー最適化(FISTA: Fast Iterative Shrinkage soft-Thresholding Algorithm)である
-            # このアルゴリズムのメジャライザー部分は勾配降下法の更新式に等しい
-            # このアルゴリズムを利用する際の注意点として、以下の２つが挙げられる
-            # ・教師データ(X, Y)がそれぞれ標準化されている必要があること
-            # ・設定イレーション回数が十分でない場合に、大域的最適解への収束が保証できないこと
-            # 標準化されていない場合にはうまく収束しないくなる等、アルゴリズムが機能しなくなる可能性がある
-            # isStandardization=True に設定しておけば、問題ない
-            
-            l1_norm      = self.norm_α * self.l1_ratio       * data_num
-            l2_norm      = self.norm_α * (1 - self.l1_ratio) * data_num
+        elif solver == "Nesterov Accelerateed Gradient":
             A            = np.hstack([x_data, np.ones([data_num, 1])])
             b            = y_data
             L            = np.linalg.norm(A.T.dot(A), ord="fro")
             x_new        = self.random.random([A.shape[1], b.shape[1]])
-            l1_specifier = np.ones(x_new.shape)
-            l2_specifier = np.ones(x_new.shape)
-            l1_specifier[0:expvars, :] = l1_specifier[0:expvars, :] / self.x_std_dev.reshape([expvars, 1])            / self.y_std_dev.reshape([1, objvars])
-            l2_specifier[0:expvars, :] = l2_specifier[0:expvars, :] / np.square(self.x_std_dev.reshape([expvars, 1]))
-            l1_specifier[expvars,   :] = 0
-            l2_specifier[expvars,   :] = 0
             x_k_m_1      = x_new.copy()
             time_k       = 0
             Base_Loss    = 0
             for idx in range(0, self.max_iterate):
-                ΔLoss  = b - np.dot(A, x_new)
-                ΔDiff  = np.dot(A.T, ΔLoss)
+                ΔEXPX  = np.exp(x_new)
+                ΔLoss  = b - np.dot(A, ΔEXPX)
+                ΔDiff  = np.dot(A.T, ΔLoss) * ΔEXPX
                 
                 rho    = 1 / L
                 diff_x = rho * ΔDiff
-                x_tmp  = soft_threshold(x_new + diff_x, rho * l1_norm * l1_specifier)
-                x_tmp  = x_tmp / (1 + rho * l2_norm * l2_specifier)
+                x_tmp  = x_new + diff_x
                 
                 time_k_a_1 = (1 + np.sqrt(1 + 4 * (time_k ** 2))) / 2
                 x_new      = x_tmp + (time_k - 1) / (time_k_a_1) * (x_tmp - x_k_m_1)
@@ -1873,26 +1790,14 @@ class Non_Negative_Vector_Auto_Regressive:
             self.alpha0 = self.alpha0.reshape([1, x.shape[1]])
             
             if visible_flg:
-                l1_norm = self.norm_α * self.l1_ratio       * data_num
-                l2_norm = self.norm_α * (1 - self.l1_ratio) * data_num
                 A       = np.hstack([x_data, np.ones([data_num, 1])])
                 B       = y_data
                 X       = np.vstack([self.alpha, self.alpha0])
-                DIFF = B - np.dot(A, X)
+                DIFF = B - np.dot(A, np.exp(X))
                 DIFF = np.dot(DIFF.T, DIFF)
-                SQUA = np.dot(X.T, X)
-                SQUA[objvars-1, objvars-1] = 0
-                ABSO = np.abs(X)
-                ABSO[expvars, :] = 0
-                OBJE = 1 / 2 * np.sum(np.diag(DIFF)) + l2_norm / 2 * np.sum(np.diag(SQUA)) + l1_norm * np.sum(ABSO)
+                OBJE = 1 / 2 * np.sum(np.diag(DIFF))
                 print("平均二乗誤差(MSE):", np.sum(np.diag(DIFF)) / data_num, flush=True)
-                print("L2正則化項(l2 norm):", np.sum(np.diag(SQUA)))
-                print("L1正則化項(l1 norm):", np.sum(ABSO))
                 print("目的関数(Objective): ", OBJE)
-                
-                X     = np.vstack([self.alpha, np.zeros([1, objvars])])
-                DLoss = np.dot(A.T, B) - l1_norm * np.sign(X) - np.dot(np.dot(A.T, A) + l2_norm * np.identity(expvars + 1), X)
-                print("目的関数(Objective)の微分: ", np.abs(DLoss).sum())
             
         else:
             raise
@@ -1947,7 +1852,7 @@ class Non_Negative_Vector_Auto_Regressive:
         if self.isStandardization:
             test_data = (test_data - self.x_mean) / self.x_std_dev
         
-        y_pred = np.dot(test_data, self.alpha) + self.alpha0
+        y_pred = np.dot(test_data, np.exp(self.alpha)) + np.exp(self.alpha0)
         if self.isStandardization:
             y_pred = y_pred * self.y_std_dev + self.y_mean
         
@@ -2042,7 +1947,7 @@ class Non_Negative_Vector_Auto_Regressive:
 
         return inf
 
-    def select_order(self, maxlag=15, ic="aic", solver="external library", isVisible=False) -> int:
+    def select_order(self, maxlag=15, ic="aic", solver="Nesterov Accelerateed Gradient", isVisible=False) -> int:
         if isVisible == True:
             print(f"SVAR model | {ic}", flush=True)
         
@@ -2134,7 +2039,7 @@ class Non_Negative_Vector_Auto_Regressive:
             x_data = np.vstack([x_data, np.zeros([self.train_data.shape[1], self.train_data.shape[1]])])
 
         for idx in range(1, max + 1):
-            ma_inf[idx, :, :] = np.dot(self.alpha.T, x_data)
+            ma_inf[idx, :, :] = np.dot(np.exp(self.alpha.T), x_data)
             x_data = np.vstack([ma_inf[idx, :, :], x_data[:-self.train_data.shape[1], :]])
         
         self.ma_inf = ma_inf
@@ -2174,7 +2079,7 @@ class Non_Negative_Vector_Auto_Regressive:
                 #tmp = self.alpha.reshape(self.lags, self.train_data.shape[1], self.train_data.shape[1])
                 #tmp = tmp.swapaxes(1,2).reshape(self.lags * self.train_data.shape[1], self.train_data.shape[1])
                 #irf[idx, :, :] = np.dot(x_data, tmp)
-                irf[idx, :, :] = np.dot(self.alpha.T, x_data)
+                irf[idx, :, :] = np.dot(np.exp(self.alpha.T), x_data)
                 x_data = np.vstack([irf[idx, :, :], x_data[:-self.train_data.shape[1], :]])
             """irf_data = self.irf(period, orth=False)
             L = np.linalg.cholesky(self.sigma)
@@ -2218,7 +2123,7 @@ class Non_Negative_Vector_Auto_Regressive:
         
         fevd[0, :, :] = fevd[0, :, :] ** 2
         for idx in range(1, period + 1):
-            fevd[idx, :, :] = np.dot(self.alpha.T, x_data)
+            fevd[idx, :, :] = np.dot(np.exp(self.alpha.T), x_data)
             x_data = np.vstack([fevd[idx, :, :], x_data[:-self.train_data.shape[1], :]])
             
             fevd[idx, :, :] = fevd[idx, :, :] ** 2
