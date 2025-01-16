@@ -2,6 +2,7 @@ import numpy as np
 import scipy as sp
 import pandas as pd
 from scipy import stats
+from sklearn.linear_model import ElasticNet
 
 def modified_cholesky(x):
     if type(x) is list:
@@ -37,6 +38,28 @@ def normal_distribution(x, loc=0, scale=1):
 def multivariate_normal_distrubution(x, mean, cov):
     return stats.multivariate_normal(mean=mean, cov=cov, allow_singular=True).pdf(x)
 
+def log_likelihood_of_normal_distrubution(x, mean, cov):
+    assert x.shape == mean.shape,        f"argument sizes do not match:: x.shape = {x.shape}, mean.shape = {mean.shape}"
+    assert cov.shape[0] == cov.shape[1], f"covariance matrix must be square:: cov.shape[0] = {cov.shape[0]}, cov.shape[1] = {cov.shape[1]}"
+    assert x.shape[0] == cov.shape[0],   f"number of dimensions of convariance matrix and input vector do not match:: x.shape[0] = {x.shape[0]}, cov.shape[0] = {cov.shape[0]}"
+    
+    try:
+        diff  = x - mean
+        sigma = np.dot(np.linalg.pinv(cov), diff)
+    except Exception as e:
+        try:
+            sigma = np.linalg.solve(cov, diff)
+        except Exception as e:
+            sigma = np.zeros_like(diff)
+    finally:
+        mult  = np.dot(diff.T, sigma)
+        mult  = np.abs(mult)
+        mult  = np.diag(mult)
+    
+    d              = x.shape[0]
+    log_likelihood = d * np.log(2 * np.pi) + np.log(np.abs(np.linalg.det(cov)) + 1e-256) + mult
+    return -log_likelihood / 2
+
 # 軟判別閾値関数
 def soft_threshold(x, α):
     return np.sign(x) * np.maximum(np.abs(x) - α, 0)
@@ -61,7 +84,6 @@ class Update_Rafael:
             self.m = np.zeros(grads.shape)
             self.v = np.zeros(grads.shape)
             self.w = np.zeros(grads.shape)
-            self.isFirst = False
 
         self.m = self.beta1 * self.m + (1 - self.beta1) * grads
         m_hat = self.m / (1 - self.beta1t)
@@ -69,7 +91,11 @@ class Update_Rafael:
         self.v = self.beta2 * self.v + (1 - self.beta2) * (grads ** 2)
         v_hat = self.v / (1 - self.beta2t)
 
-        self.w = self.beta3 * self.w + (1 - self.beta3) * ((grads - m_hat) ** 2)
+        if self.isFirst == True:
+            self.w = self.beta3 * self.w + (1 - self.beta3) * 1
+            self.isFirst = False
+        else:
+            self.w = self.beta3 * self.w + (1 - self.beta3) * ((grads - m_hat) ** 2)
         w_hat = self.w / (1 - self.beta3t)
         
         self.beta1t *= self.beta1
@@ -117,6 +143,11 @@ class Auto_Regressive:
         
         if type(train_data) is list:
             train_data = np.array(train_data)
+            
+        if type(train_data) is not np.ndarray:
+            print(f"type(train_data) = {type(train_data)}")
+            print("エラー：：Numpy型である必要があります。")
+            raise
         
         if train_data.ndim != 1:
             print(f"train_data dims = {train_data.ndim}")
@@ -139,10 +170,10 @@ class Auto_Regressive:
             A = np.hstack([x_data, np.ones([num, 1])])
             b = y_data
             try:
+                x = np.dot(np.linalg.pinv(np.dot(A.T, A)), np.dot(A.T, b))
+            except np.linalg.LinAlgError as e:
                 # x = np.dot(np.linalg.inv( np.dot(A.T, A)), np.dot(A.T, b))
                 x = np.linalg.solve(np.dot(A.T, A), np.dot(A.T, b))
-            except np.linalg.LinAlgError as e:
-                x = np.dot(np.linalg.pinv(np.dot(A.T, A)), np.dot(A.T, b))
             
             self.alpha, self.alpha0 = x[0:s], x[s]
         else:
@@ -161,6 +192,11 @@ class Auto_Regressive:
         
         if type(test_data) is list:
             test_data = np.array(test_data)
+        
+        if type(test_data) is not np.ndarray:
+            print(f"type(test_data) = {type(test_data)}")
+            print("エラー：：Numpy型である必要があります。")
+            raise
         
         if test_data.ndim != 2:
             print(f"test_data dims = {test_data.ndim}")
@@ -182,6 +218,11 @@ class Auto_Regressive:
         
         if type(test_data) is list:
             test_data = np.array(test_data)
+        
+        if type(test_data) is not np.ndarray:
+            print(f"type(test_data) = {type(test_data)}")
+            print("エラー：：Numpy型である必要があります。")
+            raise
         
         if test_data.ndim != 1:
             print(f"test_data dims = {test_data.ndim}")
@@ -286,6 +327,11 @@ class Vector_Auto_Regressive:
         if type(train_data) is list:
             train_data = np.array(train_data)
         
+        if type(train_data) is not np.ndarray:
+            print(f"type(train_data) = {type(train_data)}")
+            print("エラー：：Numpy型である必要があります。")
+            raise
+        
         if train_data.ndim != 2:
             print(f"train_data dims = {train_data.ndim}")
             print("エラー：：次元数が一致しません。")
@@ -300,7 +346,6 @@ class Vector_Auto_Regressive:
         self.solver              = ""
         self.data_num            = 0
         self.max_iterate         = max_iterate
-        self.correct_alpha       = Update_Rafael(alpha=learning_rate)
         self.unbiased_dispersion = 0
         self.dispersion          = 0
         self.ma_inf              = np.zeros([1, 1])
@@ -324,7 +369,6 @@ class Vector_Auto_Regressive:
         buf = buf + [self.solver]
         buf = buf + [self.data_num]
         buf = buf + [self.max_iterate]
-        buf = buf + [self.correct_alpha]
         buf = buf + [self.unbiased_dispersion]
         buf = buf + [self.dispersion]
         buf = buf + [self.ma_inf.copy()]
@@ -344,13 +388,12 @@ class Vector_Auto_Regressive:
         self.solver              = buf[6]
         self.data_num            = buf[7]
         self.max_iterate         = buf[8]
-        self.correct_alpha       = buf[9]
-        self.unbiased_dispersion = buf[10]
-        self.dispersion          = buf[11]
-        self.ma_inf              = buf[12]
-        self.learn_flg           = buf[13]
-        self.random_state        = buf[14]
-        self.random              = buf[15]
+        self.unbiased_dispersion = buf[9]
+        self.dispersion          = buf[10]
+        self.ma_inf              = buf[11]
+        self.learn_flg           = buf[12]
+        self.random_state        = buf[13]
+        self.random              = buf[14]
         
         return True
 
@@ -383,10 +426,10 @@ class Vector_Auto_Regressive:
             A = np.hstack([x_data, np.ones([num, 1])])
             b = y_data
             try:
+                x = np.dot(np.linalg.pinv(np.dot(A.T, A)), np.dot(A.T, b))
+            except np.linalg.LinAlgError as e:
                 # x = np.dot(np.linalg.inv( np.dot(A.T, A)), np.dot(A.T, b))
                 x = np.linalg.solve(np.dot(A.T, A), np.dot(A.T, b))
-            except np.linalg.LinAlgError as e:
-                x = np.dot(np.linalg.pinv(np.dot(A.T, A)), np.dot(A.T, b))
                 
             self.alpha, self.alpha0 = x[0:s, :], x[s, :]
             self.alpha0 = self.alpha0.reshape([1, x.shape[1]])
@@ -420,6 +463,11 @@ class Vector_Auto_Regressive:
         if type(test_data) is list:
             test_data = np.array(test_data)
         
+        if type(test_data) is not np.ndarray:
+            print(f"type(test_data) = {type(test_data)}")
+            print("エラー：：Numpy型である必要があります。")
+            raise
+        
         if test_data.ndim != 2:
             print(f"test_data dims = {test_data.ndim}")
             print("エラー：：次元数が一致しません。")
@@ -445,7 +493,10 @@ class Vector_Auto_Regressive:
         rss = np.sum(rss, axis=0)
         return rss
     
-    def log_likelihood(self) -> np.float64:
+    def get_coefficient(self) -> tuple[np.ndarray[np.float64], np.ndarray[np.float64]]:
+        return self.alpha0, self.alpha
+    
+    def log_likelihood(self, offset=0) -> np.float64:
         # なぜか、対数尤度の計算に特殊な計算方法が採用されている
         # statsmodels.tsa.vector_ar.var_model を参照のこと
         # var_loglike関数内にて当該の記述を発見
@@ -459,23 +510,22 @@ class Vector_Auto_Regressive:
             print("エラー：：学習が完了していません。")
             raise
         
-        nobs   = len(self.train_data)
-        x_data = np.array([self.train_data[t-self.lags : t][::-1].ravel() for t in range(self.lags, nobs)])
-        y_data = self.train_data[self.lags:]
-
-        num, _ = y_data.shape
+        tmp_train_data = self.train_data[offset:]
+        nobs           = len(tmp_train_data)
+        
+        x_data = np.array([tmp_train_data[t-self.lags : t][::-1].ravel() for t in range(self.lags, nobs)])
+        y_data = tmp_train_data[self.lags:]
         y_pred = self.predict(x_data)
 
         # 不偏推定共分散量を通常の推定共分散量に直す
         tmp_sigma      = self.sigma * self.unbiased_dispersion / self.dispersion
         
-        prob           = [multivariate_normal_distrubution(y_data[idx, :], y_pred[idx, :], tmp_sigma) for idx in range(0, num)]
-        prob           = np.array(prob).reshape([num, 1])
-        log_likelihood = np.sum(np.log(prob + 1e-32))
+        log_likelihood = log_likelihood_of_normal_distrubution(y_data.T, y_pred.T, tmp_sigma)
+        log_likelihood = np.sum(log_likelihood)
 
         return log_likelihood
     
-    def model_reliability(self, ic="aic") -> np.float64:
+    def model_reliability(self, ic="aic", offset=0) -> np.float64:
         # statsmodels.tsa.vector_ar.var_model.VARResults を参照のこと
         # info_criteria関数内にて当該の記述を発見
         # 赤池情報基準やベイズ情報基準をはじめとした情報基準が特殊な形に変形されている
@@ -489,7 +539,6 @@ class Vector_Auto_Regressive:
         
         num = self.data_num
         k   = self.alpha.size + self.alpha0.size
-        #log_likelihood = self.log_likelihood()
         
         # caution!!!
         # 本ライブラリでは、データ数に対して最尤推定対象が多い場合にもできる限り処理を続けるように調整してある
@@ -500,21 +549,19 @@ class Vector_Auto_Regressive:
         # 参考URL:
         # https://seetheworld1992.hatenablog.com/entry/2017/03/22/194932
         
-        # 不偏推定共分散量を通常の推定共分散量に直す
-        tmp_sigma = self.sigma * self.unbiased_dispersion / self.dispersion
-        det_sigma = np.linalg.det(tmp_sigma)
-        det_sigma = det_sigma if det_sigma != 0 else 1e-16
+        # 対数尤度の計算
+        log_likelihood = -2 * self.log_likelihood(offset=offset)
 
         inf = 0
         if ic == "aic":
             #inf = -2 * log_likelihood + 2 * k
-            inf = np.log(np.abs(det_sigma)) + 2 * k / num
+            inf = log_likelihood / num + 2 * k / num
         elif ic == "bic":
             #inf = -2 * log_likelihood + k * np.log(num)
-            inf = np.log(np.abs(det_sigma)) + k * np.log(num) / num
+            inf = log_likelihood / num + k * np.log(num) / num
         elif ic == "hqic":
             #inf = -2 * log_likelihood + 2 * k * np.log(np.log(num))
-            inf = np.log(np.abs(det_sigma)) + 2 * k * np.log(np.log(num)) / num
+            inf = log_likelihood / num + 2 * k * np.log(np.log(num)) / num
         else:
             raise
 
@@ -533,7 +580,7 @@ class Vector_Auto_Regressive:
             flg = self.fit(lags=lag, offset=maxlag - lag, solver=solver)
             
             if flg:
-                rel = self.model_reliability(ic=ic)
+                rel = self.model_reliability(ic=ic, offset=maxlag - lag)
                 model_param.append([rel, lag])
             else:
                 rel = np.finfo(np.float64).max
@@ -693,18 +740,22 @@ class Vector_Auto_Regressive:
 class Sparse_Vector_Auto_Regressive:
     def __init__(self,
                  train_data,                         # 学習対象時系列データ
-                 l1_norm:float=1.0,                  # L1正則化パラメータ
-                 l2_norm:float=1.0,                  # L2正則化パラメータ
-                 tol:float=1e-10,                    # 許容誤差
-                 isStandardization:bool=True,        # 正規化処理の適用有無
-                 max_iterate:int=100000,             # 最大ループ回数
-                 learning_rate:float=0.001,          # 学習係数
+                 norm_α:float=1.0,                   # L1・L2正則化パラメータの強さ
+                 l1_ratio:float=0.1,                 # L1・L2正則化の強さ配分・比率
+                 tol:float=1e-6,                     # 許容誤差
+                 isStandardization:bool=True,        # 標準化処理の適用有無
+                 max_iterate:int=300000,             # 最大ループ回数
                  random_state=None) -> None:         # 乱数のシード値
         if type(train_data) is pd.core.frame.DataFrame:
             train_data = train_data.to_numpy()
         
         if type(train_data) is list:
             train_data = np.array(train_data)
+        
+        if type(train_data) is not np.ndarray:
+            print(f"type(train_data) = {type(train_data)}")
+            print("エラー：：Numpy型である必要があります。")
+            raise
         
         if train_data.ndim != 2:
             print(f"train_data dims = {train_data.ndim}")
@@ -716,17 +767,17 @@ class Sparse_Vector_Auto_Regressive:
         self.alpha               = np.zeros([1, 1])
         self.alpha0              = np.zeros([1, 1])
         self.sigma               = np.zeros([1, 1])
-        self.l1_norm             = l1_norm
-        self.l2_norm             = l2_norm
+        self.norm_α              = np.abs(norm_α)
+        self.l1_ratio            = np.where(l1_ratio < 0, 0, np.where(l1_ratio > 1, 1, l1_ratio))
         self.isStandardization   = isStandardization
-        self.x_standardization   = np.empty([2, 1])
-        self.y_standardization   = np.empty([2, 1])
+        self.x_mean              = np.zeros([1, 1])
+        self.x_std_dev           = np.ones([1, 1])
+        self.y_mean              = np.zeros([1, 1])
+        self.y_std_dev           = np.ones([1, 1])
         self.tol                 = tol
         self.solver              = ""
         self.data_num            = 0
-        self.max_iterate         = max_iterate
-        self.correct_alpha       = Update_Rafael(alpha=learning_rate)
-        self.correct_alpha0      = Update_Rafael(alpha=learning_rate)
+        self.max_iterate         = round(max_iterate)
         self.unbiased_dispersion = 0
         self.dispersion          = 0
         self.ma_inf              = np.zeros([1, 1])
@@ -746,17 +797,17 @@ class Sparse_Vector_Auto_Regressive:
         buf = buf + [self.alpha.copy()]
         buf = buf + [self.alpha0.copy()]
         buf = buf + [self.sigma.copy()]
-        buf = buf + [self.l1_norm]
-        buf = buf + [self.l2_norm]
+        buf = buf + [self.norm_α]
+        buf = buf + [self.l1_ratio]
         buf = buf + [self.isStandardization]
-        buf = buf + [self.x_standardization]
-        buf = buf + [self.y_standardization]
+        buf = buf + [self.x_mean]
+        buf = buf + [self.x_std_dev]
+        buf = buf + [self.y_mean]
+        buf = buf + [self.y_std_dev]
         buf = buf + [self.tol]
         buf = buf + [self.solver]
         buf = buf + [self.data_num]
         buf = buf + [self.max_iterate]
-        buf = buf + [self.correct_alpha]
-        buf = buf + [self.correct_alpha0]
         buf = buf + [self.unbiased_dispersion]
         buf = buf + [self.dispersion]
         buf = buf + [self.ma_inf.copy()]
@@ -772,17 +823,17 @@ class Sparse_Vector_Auto_Regressive:
         self.alpha               = buf[2]
         self.alpha0              = buf[3]
         self.sigma               = buf[4]
-        self.l1_norm             = buf[5]
-        self.l2_norm             = buf[6]
+        self.norm_α              = buf[5]
+        self.l1_ratio            = buf[6]
         self.isStandardization   = buf[7]
-        self.x_standardization   = buf[8]
-        self.y_standardization   = buf[9]
-        self.tol                 = buf[10]
-        self.solver              = buf[11]
-        self.data_num            = buf[12]
-        self.max_iterate         = buf[13]
-        self.correct_alpha       = buf[14]
-        self.correct_alpha0      = buf[15]
+        self.x_mean              = buf[8]
+        self.x_std_dev           = buf[9]
+        self.y_mean              = buf[10]
+        self.y_std_dev           = buf[11]
+        self.tol                 = buf[12]
+        self.solver              = buf[13]
+        self.data_num            = buf[14]
+        self.max_iterate         = buf[15]
         self.unbiased_dispersion = buf[16]
         self.dispersion          = buf[17]
         self.ma_inf              = buf[18]
@@ -792,7 +843,7 @@ class Sparse_Vector_Auto_Regressive:
         
         return True
 
-    def fit(self, lags:int=1, offset:int=0, solver:str='coordinate descent') -> bool:
+    def fit(self, lags:int=1, offset:int=0, solver:str='external library', visible_flg:bool=False) -> bool:
         # caution!!!
         # OLS(Ordinary Learst Squares)推定量を計算する際に
         # 擬似逆行列(pinv関数)を使用している箇所が存在する
@@ -802,11 +853,11 @@ class Sparse_Vector_Auto_Regressive:
         # statsmodels.tsa.vector_ar.var_model.VARではこのような時系列データを入力として与えた場合には
         # エラーを出力するようになっている
         # 本ライブラリにおいてエラーの出力を行わないのは、近似的にでも処理結果が欲しいためである
-        # また、solverとしてISTAを使用する際にも注意が必要である
-        # ISTAは勾配降下法に似た特徴を有しており、対象の最適化パラメータのスケールに弱い
+        # また、solverとしてISTA・FISTAを使用する際にも注意が必要である
+        # ISTA・FISTAは勾配降下法に似た特徴を有しており、対象の最適化パラメータのスケールに弱い
         # 最適化対象のパラメータの解析解のスケールに依存して、必要な更新回数が多くなる
         # スケールが極端に大きい場合などには事実上収束しないが、そもそも解析解のスケールを事前に知らない・気にしていない場合も多い
-        # そのような場合には、教師データ(X, Y)をそれぞれ正規化することで対処できる
+        # そのような場合には、教師データ(X, Y)をそれぞれ標準化することで対処できる
         # isStandardization=True に設定しておくことを強く推奨する
         
         if len(self.train_data) <= offset:
@@ -822,99 +873,177 @@ class Sparse_Vector_Auto_Regressive:
             self.learn_flg = False
             return self.learn_flg
         
-        x_data         = np.array([tmp_train_data[t-lags : t][::-1].ravel() for t in range(lags, nobs)])
-        y_data         = tmp_train_data[lags:]
+        x_data = np.array([tmp_train_data[t-lags : t][::-1].ravel() for t in range(lags, nobs)])
+        y_data = tmp_train_data[lags:]
         
-        # 正規化指定の有無
+        self.lags         = lags
+        data_num, expvars = x_data.shape
+        _,        objvars = y_data.shape
+        
+        # 標準化指定の有無
         if self.isStandardization:
-            # x軸の正規化
-            _, s = x_data.shape
-            self.x_standardization    = np.empty([2, s])
-            self.x_standardization[0] = np.mean(x_data, axis=0)
-            self.x_standardization[1] = np.std( x_data, axis=0)
-
-            # 標準偏差が0の場合
-            zero_judge = (self.x_standardization[1] == 0)
-            self.x_standardization[0][zero_judge] = 0
-            self.x_standardization[1][zero_judge] = 1
-
-            x_data = (x_data - self.x_standardization[0]) / self.x_standardization[1]
+            # x軸の標準化
+            self.x_mean    = np.mean(x_data, axis=0)
+            self.x_std_dev = np.std( x_data, axis=0)
+            self.x_std_dev[self.x_std_dev < 1e-32] = 1
+            x_data = (x_data - self.x_mean) / self.x_std_dev
             
-            # y軸の正規化
-            _, s = y_data.shape
-            self.y_standardization    = np.empty([2, s])
-            self.y_standardization[0] = np.mean(y_data, axis=0)
-            self.y_standardization[1] = np.std( y_data, axis=0)
-
-            # 標準偏差が0の場合
-            zero_judge = (self.y_standardization[1] == 0)
-            self.y_standardization[0][zero_judge] = 0
-            self.y_standardization[1][zero_judge] = 1
-
-            y_data = (y_data - self.y_standardization[0]) / self.y_standardization[1]
+            # y軸の標準化
+            self.y_mean    = np.mean(y_data, axis=0)
+            self.y_std_dev = np.std( y_data, axis=0)
+            self.y_std_dev[self.y_std_dev < 1e-32] = 1
+            y_data = (y_data - self.y_mean) / self.y_std_dev
+        else:
+            self.x_mean    = np.zeros(expvars)
+            self.x_std_dev = np.ones( expvars)
+            self.y_mean    = np.zeros(objvars)
+            self.y_std_dev = np.ones( objvars)
+            
         
-        # 本ライブラリで実装されているアルゴリズムは以下の2点となる
-        # ・座標降下法アルゴリズム(CD: Coordinate Descent Algorithm)の亜種
-        # ・メジャライザー最適化(ISTA: Iterative Shrinkage soft-Thresholding Algorithm)の亜種
-        # これらのアルゴリズムは両者共に同じ目的関数を最適化している
+        # 本ライブラリで実装されているアルゴリズムは以下の4点となる
+        # ・sklearnライブラリに実装されているElasticNet(外部ライブラリ)
+        # ・座標降下法アルゴリズム(CD: Coordinate Descent Algorithm)
+        # ・メジャライザー最適化( ISTA: Iterative Shrinkage soft-Thresholding Algorithm)
+        # ・メジャライザー最適化(FISTA: Fast Iterative Shrinkage soft-Thresholding Algorithm)
+        # これらのアルゴリズムは全て同じ目的関数を最適化している
         # しかし、実際に同一のパラメータでパラメータ探索をさせても同一の解は得られない
-        # これは、主にISTAのアルゴリズムが勾配降下法と同様の性質を有していることが原因である
-        # すなわち実行のたびに異なる解が導かれるのである
-        # 実際に両者の探索結果を比較してみると、非常に近いことが確認できる
-        # 探索解の品質を保証したいのであれば、座標降下法アルゴリズムを採用することを強く推奨する
+        # これは、実装の細かな違いによるものであったり、解析解ではなく近似解が得られるためであったりする
+        # 特にISTAは勾配降下法と同等の性質を有しているため、異なる近似解が得られる
+        # すなわち実行のたびに異なる解が導かれるかつ極所最適解に落ち着くことがある
+        # また、外部ライブラリとしてsklearn.linear_model.ElasticNetを利用することもできる
+        # この外部ライブラリは内部で座標降下法で探索を行っている点で本ライブラリと同等である
+        # 一方で、この外部ライブラリはC言語(Cython)を利用してチューニングが行われている
+        # また広く公開され、多くの人に利用されているライブラリでもあるため速度・品質ともにレベルが高い
+        # 探索解の品質を保証したいのであれば、外部ライブラリの利用を強く推奨する
+        # 一方で、外部ライブラリはデータの標準化処理に対応していない点に注意する必要がある
+        # データの標準化処理を行う場合にはL1・L2正則化項の調整を行う必要があるが、外部ライブラリでは行うことができないためである
+        # 最後に広く認められているわけではないため使用の際には注意が必要であるが、本ライブラリにて実装済みの
+        # これら3種類のアルゴリズムが想定する目的関数は以下のとおり
+        # A = 説明変数x + 切片b の行列(データ数n ✖️ (説明変数数s + 1))
+        # B = 目的変数y の行列(データ数n ✖️ 目的変数数m)
+        # X = 説明変数xの係数 + 切片bの係数 の行列((説明変数数s + 1) ✖️ 目的変数数m)
+        # λ_1 = 正則化の強度 * l1_ratio
+        # λ_2 = 正則化の強度 * (1 - l1_ratio)
+        # math: \begin{equation}
+        # math: \begin{split}
+        # math: Objective &= \frac{1}{n} \| B - AX \|_2^2 + \frac{λ_2}{2} \| X \|_2^2 + λ_1 \|X\|_1 \\
+        # math: &= tr [ \left( B - AX \right) ^T \left( B - AX \right) ] + \frac{λ_2 n}{2} tr [ X^T X ] + λ_1 n \sum_{i=1} |x_i |
+        # math: \end{split}
+        # math: \end{equation}
+        # 参考までに各オプションごとの実行速度は以下の通り
+        # external library  >>  FISTA  >>  ISTA  >>  coordinate descent
         
-        self.lags = lags
-        num, s    = x_data.shape
-        if solver == "coordinate descent":
+        if   solver == "external library":
+            # ElasticNetの外部ライブラリである
+            # ラッソ最適化(L1正則化)とリッジ最適化(L2正則化)を行なっている
+            # このオプションではsklearnに実装されているモデルに処理を投げることを行なっている
+            # 注意点として、データの標準化処理には対応していないことが挙げられる
+            # 仮に標準化処理付きでこのオプションが選択された場合には、簡易的な正則化項の調整を行うことにしている
+            # しかし、この調整は非常に簡素なものであり厳密性に欠ける
+            # このオプションを利用する際には、標準化処理を行わないことを強く推奨する
+            tmp_alpha = self.norm_α * np.mean(self.y_std_dev) / np.mean(self.x_std_dev)
+            model = ElasticNet(alpha=tmp_alpha.tolist(), l1_ratio=self.l1_ratio.tolist(), max_iter=self.max_iterate, tol=self.tol)
+            model.fit(x_data, y_data)
+            
+            self.alpha, self.alpha0 = model.coef_.T, model.intercept_
+            self.alpha0 = self.alpha0.reshape([1, y_data.shape[1]])
+            
+            if visible_flg:
+                l1_norm = self.norm_α * self.l1_ratio       * data_num
+                l2_norm = self.norm_α * (1 - self.l1_ratio) * data_num
+                A       = np.hstack([x_data, np.ones([data_num, 1])])
+                B       = y_data
+                X       = np.vstack([self.alpha, self.alpha0])
+                DIFF = B - np.dot(A, X)
+                DIFF = np.dot(DIFF.T, DIFF)
+                SQUA = np.dot(X.T, X)
+                SQUA[objvars-1, objvars-1] = 0
+                ABSO = np.abs(X)
+                ABSO[expvars, :] = 0
+                OBJE = 1 / 2 * np.sum(np.diag(DIFF)) + l2_norm / 2 * np.sum(np.diag(SQUA)) + l1_norm * np.sum(ABSO)
+                print("平均二乗誤差(MSE):", np.sum(np.diag(DIFF)) / data_num, flush=True)
+                print("L2正則化項(l2 norm):", np.sum(np.diag(SQUA)))
+                print("L1正則化項(l1 norm):", np.sum(ABSO))
+                print("目的関数(Objective): ", OBJE)
+                
+                X     = np.vstack([self.alpha, np.zeros([1, objvars])])
+                DLoss = np.dot(A.T, B) - l1_norm * np.sign(X) - np.dot(np.dot(A.T, A) + l2_norm * np.identity(expvars + 1), X)
+                print("目的関数(Objective)の微分: ", np.abs(DLoss).sum())
+            
+        elif solver == "coordinate descent":
             # ラッソ最適化(L1正則化)とリッジ最適化(L2正則化)を行なっている
             # 注意点として、切片に対してはラッソ最適化を行わないことが挙げられる
             # リッジ最適化は一般に係数を0にするためではなく、最適化対象のパラメータ全体を小さく保つために利用される
             # 一方で、ラッソ最適化は係数を0にするために利用される手法である
             # そのため、一般にはラッソ最適化を切片に対しては適用しない習慣がある
             # このライブラリもこの習慣に従うことにする
-            # ラッソ最適化のアルゴリズムは自前のものであり、いわゆる座標降下法の亜種である
-            # 一般的な座標降下法は各変数に対して更新を行うため、計算量が比較的に大きい
+            # リッジ最適化についても切片に対しては適用しないことにした
+            # これは標準化を行う前と後で、正則化の効果が変動してしまうことを防ぐためである
+            # 実装アルゴリズムは座標降下法である
             # できる限り高速に処理を行いたかったので、このような実装になった
-            # このアルゴリズムと一般的な座標降下法との最大の差異は、逆行列を陽に計算するか・陰に計算するかの違いである
-            # 逆行列の計算を陽に計算することにより、かえって全体の計算量が減るように設計した
-            # これにより収束条件が、符号の一致のみに限定されたため比較的に早く収束することが期待できる
-            # このアルゴリズムの計算量は、O(ループ回数 × O(行列積))である
-            # N×M, M×Lの大きさを持つ行列A, Bを想定すると、行列積の計算量はO(NML)となる
-            # このSVARライブラリではそれぞれ、N=説明変数の数 M=説明変数の数 L=目的変数の数に対応している
-            # 一般的な座標降下法と比較して計算量オーダー O(ループ回数 × NML)は同じである
-            # しかしループ回数が少なくなること・定数項kの部分が小さいため、このアルゴリズムの方が高速に動作することを期待できる
-            # このアルゴリズムを利用するにあたって、学習対象データの正規化などの条件は特にない
-            # ただし、逆行列を必要とするため正則な学習データ行列であることが望ましい
+            # このアルゴリズムの計算量は、O(ループ回数 × 説明変数の数 × O(行列積))である
+            # 1×M, M×Lの大きさを持つ行列A, Bを想定すると、行列積の計算量はO(ML)となる
+            # このSVARライブラリではそれぞれ、M=(説明変数の数 + 1) L=目的変数の数に対応している
+            # 計算量オーダーを書き直すと O(ループ回数 × 説明変数の数 × ML)となる
+            # このアルゴリズムを利用するにあたって、学習対象データの標準化などの条件は特にない
+            # しかし多くの場合において、標準化処理を施してある学習データに対する学習速度は早い
+            # その意味で標準化処理を推奨する
+            l1_norm = self.norm_α * self.l1_ratio       * data_num
+            l2_norm = self.norm_α * (1 - self.l1_ratio) * data_num
+            A       = np.hstack([x_data, np.ones([data_num, 1])])
+            b       = y_data
             
-            A = np.hstack([x_data, np.ones([num, 1])])
-            b = y_data
-            try:
-                L = np.linalg.inv( np.dot(A.T, A) + self.l2_norm * np.identity(s + 1))
-            except np.linalg.LinAlgError as e:
-                L = np.linalg.pinv(np.dot(A.T, A) + self.l2_norm * np.identity(s + 1))
-            finally:
-                R = np.dot(A.T, b)
-                T = np.dot(L, R)
-                D = np.diag(np.diag(L))
-                G = np.diag(L).reshape([s + 1, 1]).copy()
-                C = L - D
+            L2NORM = l2_norm * np.identity(expvars + 1)
+            L2NORM[0:expvars, 0:expvars] = L2NORM[0:expvars, 0:expvars] / np.square(self.x_std_dev.reshape([1, expvars]))
+            L2NORM[expvars,   expvars]   = 0
+            L = np.dot(A.T, A) + L2NORM
+            R = np.dot(A.T, b)
+            D = np.diag(np.diag(L))
+            G = np.diag(L)
+            C = L - D
+            
+            x_new = np.zeros([expvars + 1, objvars])
+            for idx1 in range(0, self.max_iterate):
+                x_old = x_new.copy()
                 
-                # 切片に対して、L1正則化を適用しない
-                G[s, 0] = 0
-                C[s, :] = 0
+                x_new[expvars, :] = (R[expvars, :] - np.dot(C[expvars, :], x_new)) / G[expvars]
+                for idx2 in range(0, expvars):
+                    tmp = R[idx2, :] - np.dot(C[idx2, :], x_new)
+                    x_new[idx2, :] = soft_threshold(tmp, l1_norm / self.x_std_dev[idx2] / self.y_std_dev) / G[idx2]
                 
-            x_old = soft_threshold(T, self.l1_norm * np.abs(G))
-            for _ in range(0, self.max_iterate):
-                tmp   = T - self.l1_norm * np.dot(C, np.sign(x_old))
-                x_new = soft_threshold(tmp, self.l1_norm * np.abs(G))
-                    
-                if not np.all(np.sign(x_new) == np.sign(x_old)):
-                    x_old = x_new
-                else:
+                ΔDiff = np.sum((x_new - x_old) ** 2) / data_num
+                if visible_flg and (idx1 % 1000 == 0):
+                    print(f"ite:{idx1+1}  ΔDiff:{ΔDiff}")
+                
+                if ΔDiff <= self.tol:
                     break
+            
             x = x_new
-            self.alpha, self.alpha0 = x[0:s, :], x[s, :]
+            self.alpha, self.alpha0 = x[0:expvars, :], x[expvars, :]
             self.alpha0 = self.alpha0.reshape([1, x.shape[1]])
+            
+            if visible_flg:
+                l1_norm = self.norm_α * self.l1_ratio       * data_num
+                l2_norm = self.norm_α * (1 - self.l1_ratio) * data_num
+                A       = np.hstack([x_data, np.ones([data_num, 1])])
+                B       = y_data
+                X       = np.vstack([self.alpha, self.alpha0])
+                DIFF = B - np.dot(A, X)
+                DIFF = np.dot(DIFF.T, DIFF)
+                SQUA = np.dot(X.T, X)
+                SQUA[objvars-1, objvars-1] = 0
+                ABSO = np.abs(X)
+                ABSO[expvars, :] = 0
+                OBJE = 1 / 2 * np.sum(np.diag(DIFF)) + l2_norm / 2 * np.sum(np.diag(SQUA)) + l1_norm * np.sum(ABSO)
+                print("平均二乗誤差(MSE):", np.sum(np.diag(DIFF)) / data_num, flush=True)
+                print("L2正則化項(l2 norm):", np.sum(np.diag(SQUA)))
+                print("L1正則化項(l1 norm):", np.sum(ABSO))
+                print("目的関数(Objective): ", OBJE)
+                
+                X     = np.vstack([self.alpha, np.zeros([1, objvars])])
+                DLoss = np.dot(A.T, B) - l1_norm * np.sign(X) - np.dot(np.dot(A.T, A) + l2_norm * np.identity(expvars + 1), X)
+                print("目的関数(Objective)の微分: ", np.abs(DLoss).sum())
+            
         elif solver == "ISTA":
             # ラッソ最適化(L1正則化)とリッジ最適化(L2正則化)を行なっている
             # 注意点として、切片に対してはラッソ最適化を行わないことが挙げられる
@@ -922,38 +1051,158 @@ class Sparse_Vector_Auto_Regressive:
             # 一方で、ラッソ最適化は係数を0にするために利用される手法である
             # そのため、一般にはラッソ最適化を切片に対しては適用しない習慣がある
             # このライブラリもこの習慣に従うことにする
-            # 以下のアルゴリズムは一般的なメジャライザー最適化(ISTA: Iterative Shrinkage soft-Thresholding Algorithm)の亜種である
-            # 基本的な理論こそ違いはあるものの最終的な更新式は勾配法そのものであり、勾配法における最適化アルゴリズムを適用できる
-            # そのため、最適化アルゴリズムの一つであるRafael(自前アルゴリズム)をこのアルゴリズムに適用することにした
-            # 学習係数が定数である場合に比べて高速であることが期待できる
-            # このアルゴリズムを使用する際の注意点として、教師データ(X, Y)がそれぞれ正規化されている必要があることが挙げられる
-            # 正規化されていない場合にはうまく収束しないくなる等、アルゴリズムが機能しなくなる可能性がある
+            # リッジ最適化についても切片に対しては適用しないことにした
+            # これは標準化を行う前と後で、正則化の効果が変動してしまうことを防ぐためである
+            # 実装アルゴリズムは一般的なメジャライザー最適化(ISTA: Iterative Shrinkage soft-Thresholding Algorithm)である
+            # このアルゴリズムのメジャライザー部分は勾配降下法の更新式に等しい
+            # このアルゴリズムを利用する際の注意点として、以下の２つが挙げられる
+            # ・教師データ(X, Y)がそれぞれ標準化されている必要があること
+            # ・設定イレーション回数が十分でない場合に、大域的最適解への収束が保証できないこと
+            # 標準化されていない場合にはうまく収束しないくなる等、アルゴリズムが機能しなくなる可能性がある
             # isStandardization=True に設定しておけば、問題ない
             
-            self.alpha  = self.random.random([s, y_data.shape[1]])
-            self.alpha0 = self.random.random([1, y_data.shape[1]])
-            for _ in range(0, self.max_iterate):
-                y_pred  = np.dot(x_data, self.alpha) + self.alpha0
+            l1_norm      = self.norm_α * self.l1_ratio       * data_num
+            l2_norm      = self.norm_α * (1 - self.l1_ratio) * data_num
+            A            = np.hstack([x_data, np.ones([data_num, 1])])
+            b            = y_data
+            L            = np.linalg.norm(A.T.dot(A), ord="fro")
+            x_new        = self.random.random([A.shape[1], b.shape[1]])
+            l1_specifier = np.ones(x_new.shape)
+            l2_specifier = np.ones(x_new.shape)
+            l1_specifier[0:expvars, :] = l1_specifier[0:expvars, :] / self.x_std_dev.reshape([expvars, 1])            / self.y_std_dev.reshape([1, objvars])
+            l2_specifier[0:expvars, :] = l2_specifier[0:expvars, :] / np.square(self.x_std_dev.reshape([expvars, 1]))
+            l1_specifier[expvars,   :] = 0
+            l2_specifier[expvars,   :] = 0
+            Base_Loss    = 0
+            for idx in range(0, self.max_iterate):
+                ΔLoss  = b - np.dot(A, x_new)
+                ΔDiff  = np.dot(A.T, ΔLoss)
                 
-                ΔLoss   = y_data - y_pred
-                Δalpha  = np.dot(x_data.T, ΔLoss)
-                Δalpha0 = np.sum(ΔLoss, axis=0)
+                rho    = 1 / L
+                diff_x = rho * ΔDiff
+                x_new  = soft_threshold(x_new + diff_x, rho * l1_norm * l1_specifier)
+                x_new  = x_new / (1 + rho * l2_norm * l2_specifier)
                 
-                diff_alpha  = self.correct_alpha.update(Δalpha)
-                diff_alpha0 = self.correct_alpha0.update(Δalpha0)
-                rho         = diff_alpha  / (Δalpha  + 1e-16)
-                rho0        = diff_alpha0 / (Δalpha0 + 1e-16)
+                mse = np.sum(ΔLoss ** 2)
+                if visible_flg and (idx % 1000 == 0):
+                    update_diff = np.sum(diff_x ** 2)
+                    print(f"ite:{idx+1}  mse:{mse}  update_diff:{update_diff} diff:{np.abs(Base_Loss - mse)}")
                 
-                diff_alpha  = diff_alpha  - self.l2_norm * rho  * self.alpha
-                diff_alpha0 = diff_alpha0 - self.l2_norm * rho0 * self.alpha0
-                
-                # 切片に対して、L1正則化を適用しない
-                self.alpha  = soft_threshold(self.alpha + diff_alpha, self.l1_norm * rho)
-                self.alpha0 = self.alpha0 + diff_alpha0
-                
-                update_diff = np.sqrt(np.sum(Δalpha ** 2) + np.sum(Δalpha0 ** 2))
-                if update_diff <= self.tol:
+                if np.abs(Base_Loss - mse) <= self.tol:
                     break
+                else:
+                    Base_Loss = mse
+            
+            x = x_new
+            self.alpha, self.alpha0 = x[0:expvars, :], x[expvars, :]
+            self.alpha0 = self.alpha0.reshape([1, x.shape[1]])
+            
+            if visible_flg:
+                l1_norm = self.norm_α * self.l1_ratio       * data_num
+                l2_norm = self.norm_α * (1 - self.l1_ratio) * data_num
+                A       = np.hstack([x_data, np.ones([data_num, 1])])
+                B       = y_data
+                X       = np.vstack([self.alpha, self.alpha0])
+                DIFF = B - np.dot(A, X)
+                DIFF = np.dot(DIFF.T, DIFF)
+                SQUA = np.dot(X.T, X)
+                SQUA[objvars-1, objvars-1] = 0
+                ABSO = np.abs(X)
+                ABSO[expvars, :] = 0
+                OBJE = 1 / 2 * np.sum(np.diag(DIFF)) + l2_norm / 2 * np.sum(np.diag(SQUA)) + l1_norm * np.sum(ABSO)
+                print("平均二乗誤差(MSE):", np.sum(np.diag(DIFF)) / data_num, flush=True)
+                print("L2正則化項(l2 norm):", np.sum(np.diag(SQUA)))
+                print("L1正則化項(l1 norm):", np.sum(ABSO))
+                print("目的関数(Objective): ", OBJE)
+                
+                X     = np.vstack([self.alpha, np.zeros([1, objvars])])
+                DLoss = np.dot(A.T, B) - l1_norm * np.sign(X) - np.dot(np.dot(A.T, A) + l2_norm * np.identity(expvars + 1), X)
+                print("目的関数(Objective)の微分: ", np.abs(DLoss).sum())
+        
+        elif solver == "FISTA":
+            # ラッソ最適化(L1正則化)とリッジ最適化(L2正則化)を行なっている
+            # 注意点として、切片に対してはラッソ最適化を行わないことが挙げられる
+            # リッジ最適化は一般に係数を0にするためではなく、最適化対象のパラメータ全体を小さく保つために利用される
+            # 一方で、ラッソ最適化は係数を0にするために利用される手法である
+            # そのため、一般にはラッソ最適化を切片に対しては適用しない習慣がある
+            # このライブラリもこの習慣に従うことにする
+            # リッジ最適化についても切片に対しては適用しないことにした
+            # これは標準化を行う前と後で、正則化の効果が変動してしまうことを防ぐためである
+            # 実装アルゴリズムは一般的なメジャライザー最適化(FISTA: Fast Iterative Shrinkage soft-Thresholding Algorithm)である
+            # このアルゴリズムのメジャライザー部分は勾配降下法の更新式に等しい
+            # このアルゴリズムを利用する際の注意点として、以下の２つが挙げられる
+            # ・教師データ(X, Y)がそれぞれ標準化されている必要があること
+            # ・設定イレーション回数が十分でない場合に、大域的最適解への収束が保証できないこと
+            # 標準化されていない場合にはうまく収束しないくなる等、アルゴリズムが機能しなくなる可能性がある
+            # isStandardization=True に設定しておけば、問題ない
+            
+            l1_norm      = self.norm_α * self.l1_ratio       * data_num
+            l2_norm      = self.norm_α * (1 - self.l1_ratio) * data_num
+            A            = np.hstack([x_data, np.ones([data_num, 1])])
+            b            = y_data
+            L            = np.linalg.norm(A.T.dot(A), ord="fro")
+            x_new        = self.random.random([A.shape[1], b.shape[1]])
+            l1_specifier = np.ones(x_new.shape)
+            l2_specifier = np.ones(x_new.shape)
+            l1_specifier[0:expvars, :] = l1_specifier[0:expvars, :] / self.x_std_dev.reshape([expvars, 1])            / self.y_std_dev.reshape([1, objvars])
+            l2_specifier[0:expvars, :] = l2_specifier[0:expvars, :] / np.square(self.x_std_dev.reshape([expvars, 1]))
+            l1_specifier[expvars,   :] = 0
+            l2_specifier[expvars,   :] = 0
+            x_k_m_1      = x_new.copy()
+            time_k       = 0
+            Base_Loss    = 0
+            for idx in range(0, self.max_iterate):
+                ΔLoss  = b - np.dot(A, x_new)
+                ΔDiff  = np.dot(A.T, ΔLoss)
+                
+                rho    = 1 / L
+                diff_x = rho * ΔDiff
+                x_tmp  = soft_threshold(x_new + diff_x, rho * l1_norm * l1_specifier)
+                x_tmp  = x_tmp / (1 + rho * l2_norm * l2_specifier)
+                
+                time_k_a_1 = (1 + np.sqrt(1 + 4 * (time_k ** 2))) / 2
+                x_new      = x_tmp + (time_k - 1) / (time_k_a_1) * (x_tmp - x_k_m_1)
+                
+                time_k  = time_k_a_1
+                x_k_m_1 = x_tmp
+                
+                mse = np.sum(ΔLoss ** 2)
+                if visible_flg and (idx % 1000 == 0):
+                    update_diff = np.sum(diff_x ** 2)
+                    print(f"ite:{idx+1}  mse:{mse}  update_diff:{update_diff} diff:{np.abs(Base_Loss - mse)}")
+                
+                if (idx != 1) and (np.abs(Base_Loss - mse) <= self.tol):
+                    x_new = x_k_m_1
+                    break
+                else:
+                    Base_Loss = mse
+            
+            x = x_new
+            self.alpha, self.alpha0 = x[0:expvars, :], x[expvars, :]
+            self.alpha0 = self.alpha0.reshape([1, x.shape[1]])
+            
+            if visible_flg:
+                l1_norm = self.norm_α * self.l1_ratio       * data_num
+                l2_norm = self.norm_α * (1 - self.l1_ratio) * data_num
+                A       = np.hstack([x_data, np.ones([data_num, 1])])
+                B       = y_data
+                X       = np.vstack([self.alpha, self.alpha0])
+                DIFF = B - np.dot(A, X)
+                DIFF = np.dot(DIFF.T, DIFF)
+                SQUA = np.dot(X.T, X)
+                SQUA[objvars-1, objvars-1] = 0
+                ABSO = np.abs(X)
+                ABSO[expvars, :] = 0
+                OBJE = 1 / 2 * np.sum(np.diag(DIFF)) + l2_norm / 2 * np.sum(np.diag(SQUA)) + l1_norm * np.sum(ABSO)
+                print("平均二乗誤差(MSE):", np.sum(np.diag(DIFF)) / data_num, flush=True)
+                print("L2正則化項(l2 norm):", np.sum(np.diag(SQUA)))
+                print("L1正則化項(l1 norm):", np.sum(ABSO))
+                print("目的関数(Objective): ", OBJE)
+                
+                X     = np.vstack([self.alpha, np.zeros([1, objvars])])
+                DLoss = np.dot(A.T, B) - l1_norm * np.sign(X) - np.dot(np.dot(A.T, A) + l2_norm * np.identity(expvars + 1), X)
+                print("目的関数(Objective)の微分: ", np.abs(DLoss).sum())
+            
         else:
             raise
         
@@ -963,12 +1212,12 @@ class Sparse_Vector_Auto_Regressive:
         # この状況下では、母数が負の値になってしまうため採用することができない
         # そのため、苦肉の策として 母数 = 学習データ数 - 1 を採用することにした。根拠は弱い。
         # 今後、このような状況での最適な不偏共分散行列の求め方が判明したならば積極的に変更を加えることとする
-        denominator    = num - 1
+        denominator    = data_num - 1
         
         self.learn_flg = True
         if self.isStandardization:
-            y_pred     = self.predict(x_data * self.x_standardization[1] + self.x_standardization[0])
-            diff       = y_data - (y_pred - self.y_standardization[0]) / self.y_standardization[1]
+            y_pred     = self.predict(x_data * self.x_std_dev + self.x_mean)
+            diff       = y_data - (y_pred - self.y_mean) / self.y_std_dev
         else:
             y_pred     = self.predict(x_data)
             diff       = y_data -  y_pred
@@ -976,7 +1225,7 @@ class Sparse_Vector_Auto_Regressive:
         
         self.sigma     = np.dot(diff.T, diff) / denominator
         self.solver    = solver
-        self.data_num  = num
+        self.data_num  = data_num
         self.unbiased_dispersion = denominator
         self.dispersion          = y_data.shape[0]
 
@@ -989,6 +1238,11 @@ class Sparse_Vector_Auto_Regressive:
         if type(test_data) is list:
             test_data = np.array(test_data)
         
+        if type(test_data) is not np.ndarray:
+            print(f"type(test_data) = {type(test_data)}")
+            print("エラー：：Numpy型である必要があります。")
+            raise
+        
         if test_data.ndim != 2:
             print(f"test_data dims = {test_data.ndim}")
             print("エラー：：次元数が一致しません。")
@@ -1000,11 +1254,11 @@ class Sparse_Vector_Auto_Regressive:
             raise
         
         if self.isStandardization:
-            test_data = (test_data - self.x_standardization[0]) / self.x_standardization[1]
+            test_data = (test_data - self.x_mean) / self.x_std_dev
         
         y_pred = np.dot(test_data, self.alpha) + self.alpha0
         if self.isStandardization:
-            y_pred = y_pred * self.y_standardization[1] + self.y_standardization[0]
+            y_pred = y_pred * self.y_std_dev + self.y_mean
         
         return y_pred
     
@@ -1019,7 +1273,10 @@ class Sparse_Vector_Auto_Regressive:
         rss = np.sum(rss, axis=0)
         return rss
     
-    def log_likelihood(self) -> np.float64:
+    def get_coefficient(self) -> tuple[np.ndarray[np.float64], np.ndarray[np.float64]]:
+        return self.alpha0, self.alpha
+    
+    def log_likelihood(self, offset=0) -> np.float64:
         # なぜか、対数尤度の計算に特殊な計算方法が採用されている
         # statsmodels.tsa.vector_ar.var_model を参照のこと
         # var_loglike関数内にて当該の記述を発見
@@ -1033,23 +1290,26 @@ class Sparse_Vector_Auto_Regressive:
             print("エラー：：学習が完了していません。")
             raise
         
-        nobs   = len(self.train_data)
-        x_data = np.array([self.train_data[t-self.lags : t][::-1].ravel() for t in range(self.lags, nobs)])
-        y_data = self.train_data[self.lags:]
-
-        num, _ = y_data.shape
+        tmp_train_data = self.train_data[offset:]
+        nobs           = len(tmp_train_data)
+        
+        x_data = np.array([tmp_train_data[t-self.lags : t][::-1].ravel() for t in range(self.lags, nobs)])
+        y_data = tmp_train_data[self.lags:]
         y_pred = self.predict(x_data)
+        
+        if self.isStandardization:
+            y_data = (y_data - self.y_mean) / self.y_std_dev
+            y_pred = (y_pred - self.y_mean) / self.y_std_dev
 
         # 不偏推定共分散量を通常の推定共分散量に直す
         tmp_sigma      = self.sigma * self.unbiased_dispersion / self.dispersion
         
-        prob           = [multivariate_normal_distrubution(y_data[idx, :], y_pred[idx, :], tmp_sigma) for idx in range(0, num)]
-        prob           = np.array(prob).reshape([num, 1])
-        log_likelihood = np.sum(np.log(prob + 1e-32))
+        log_likelihood = log_likelihood_of_normal_distrubution(y_data.T, y_pred.T, tmp_sigma)
+        log_likelihood = np.sum(log_likelihood)
 
         return log_likelihood
     
-    def model_reliability(self, ic="aic") -> np.float64:
+    def model_reliability(self, ic:str="aic", offset=0) -> np.float64:
         # statsmodels.tsa.vector_ar.var_model.VARResults を参照のこと
         # info_criteria関数内にて当該の記述を発見
         # 赤池情報基準やベイズ情報基準をはじめとした情報基準が特殊な形に変形されている
@@ -1063,7 +1323,6 @@ class Sparse_Vector_Auto_Regressive:
         
         num = self.data_num
         k   = self.alpha.size + self.alpha0.size
-        #log_likelihood = self.log_likelihood()
         
         # caution!!!
         # 本ライブラリでは、データ数に対して最尤推定対象が多い場合にもできる限り処理を続けるように調整してある
@@ -1074,27 +1333,25 @@ class Sparse_Vector_Auto_Regressive:
         # 参考URL:
         # https://seetheworld1992.hatenablog.com/entry/2017/03/22/194932
         
-        # 不偏推定共分散量を通常の推定共分散量に直す
-        tmp_sigma = self.sigma * self.unbiased_dispersion / self.dispersion
-        det_sigma = np.linalg.det(tmp_sigma)
-        det_sigma = det_sigma if det_sigma != 0 else 1e-16
+        # 対数尤度の計算
+        log_likelihood = -2 * self.log_likelihood(offset=offset)
 
         inf = 0
         if ic == "aic":
             #inf = -2 * log_likelihood + 2 * k
-            inf = np.log(np.abs(det_sigma)) + 2 * k / num
+            inf = log_likelihood / num + 2 * k / num
         elif ic == "bic":
             #inf = -2 * log_likelihood + k * np.log(num)
-            inf = np.log(np.abs(det_sigma)) + k * np.log(num) / num
+            inf = log_likelihood / num + k * np.log(num) / num
         elif ic == "hqic":
             #inf = -2 * log_likelihood + 2 * k * np.log(np.log(num))
-            inf = np.log(np.abs(det_sigma)) + 2 * k * np.log(np.log(num)) / num
+            inf = log_likelihood / num + 2 * k * np.log(np.log(num)) / num
         else:
             raise
 
         return inf
 
-    def select_order(self, maxlag=15, ic="aic", solver="coordinate descent", isVisible=False) -> int:
+    def select_order(self, maxlag=15, ic="aic", solver="external library", isVisible=False) -> int:
         if isVisible == True:
             print(f"SVAR model | {ic}", flush=True)
         
@@ -1107,7 +1364,7 @@ class Sparse_Vector_Auto_Regressive:
             flg = self.fit(lags=lag, offset=maxlag - lag, solver=solver)
             
             if flg:
-                rel = self.model_reliability(ic=ic)
+                rel = self.model_reliability(ic=ic, offset=maxlag - lag)
                 model_param.append([rel, lag])
             else:
                 rel = np.finfo(np.float64).max
@@ -1158,8 +1415,8 @@ class Sparse_Vector_Auto_Regressive:
         tmp_train_data = backup[0]
         tmp_lags       = backup[1]
         tmp_alpha      = backup[2]
-        tmp_solver     = backup[11]
-        tmp_data_num   = backup[12]
+        tmp_solver     = backup[13]
+        tmp_data_num   = backup[14]
 
         self.fit(lags=tmp_lags, solver=tmp_solver)
         rss1 = self.get_RSS()[caused]
@@ -1193,6 +1450,17 @@ class Sparse_Vector_Auto_Regressive:
         return self.ma_inf
 
     def irf(self, period=30, orth=False, isStdDevShock=True):
+        # caution!!!
+        # もしもself.isStandardization=Trueであればインパルス応答関数の計算結果は、そのまま解釈することができない
+        # なぜならば、標準化されたデータ列に対して推定された係数を元にインパルス応答関数を計算するからである
+        # また、標準化の影響を打ち消すような処理を係数やインパルス応答関数の結果そのものに適用する事ができないため
+        # 特にデータ列ごとに分散量が1になるように正規化されているので、各次元同士の影響量も比較することができない
+        # この場合に有効な見方は「各データ列が正規化されている場合のインパルス応答関数の結果」であって、
+        # 「各データ列が生データのままな場合のインパルス応答関数の結果」ではない
+        # 他方で、self.isStandardization=Trueであればインパルス応答関数の計算結果が数値として利用価値が低いという訳でもない
+        # 各列(各変数)ごとのスケールの違いによる最尤推定量のバイアスが発生せず、変数間の本質的な相互影響量を計算できるためである
+        # スケールの復元は行なっているが、標準化されていない場合の計算結果とは一致しないことに注意
+        
         if not self.learn_flg:
             print(f"learn_flg = {self.learn_flg}")
             print("エラー：：学習が完了していません。")
@@ -1223,10 +1491,24 @@ class Sparse_Vector_Auto_Regressive:
 
         else:
             irf = self.ma_replace(period)
+        
+        if self.isStandardization and orth and isStdDevShock:
+            irf = irf * self.y_std_dev.T
 
         return irf
     
     def fevd(self, period=30):
+        # caution!!!
+        # もしもself.isStandardization=Trueであれば分散分解の計算結果は、そのまま解釈することができない
+        # なぜならば、標準化されたデータ列に対して推定された係数を元に分散分解を計算するからである
+        # また、標準化の影響を打ち消すような処理を係数や分散分解の結果そのものに適用する事ができないため
+        # 特にデータ列ごとに分散量が1になるように正規化されているので、各次元同士の影響量も比較することができない
+        # この場合に有効な見方は「各データ列が正規化されている場合の分散分解の結果」であって、
+        # 「各データ列が生データのままな場合の分散分解の結果」ではない
+        # 他方で、self.isStandardization=Trueであれば分散分解の計算結果が数値として利用価値が低いという訳でもない
+        # 各列(各変数)ごとのスケールの違いによる最尤推定量のバイアスが発生せず、変数間の本質的な相互影響量を計算できるためである
+        # 分散分解の場合には最終的に1に正規化されるため、スケールの復元はあえて行わないことにする
+        
         if not self.learn_flg:
             print(f"learn_flg = {self.learn_flg}")
             print("エラー：：学習が完了していません。")
@@ -1271,6 +1553,11 @@ class Dickey_Fuller_Test:
         
         if type(test_data) is list:
             test_data = np.array(test_data)
+        
+        if type(test_data) is not np.ndarray:
+            print(f"type(test_data) = {type(test_data)}")
+            print("エラー：：Numpy型である必要があります。")
+            raise
         
         if (test_data.ndim != 2) or (test_data.shape[1] != 1):
             print(f"test_data dims  = {test_data.ndim}")
@@ -1320,10 +1607,10 @@ class Dickey_Fuller_Test:
             A = x_data
             b = y_data
             try:
+                x = np.dot(np.linalg.pinv(np.dot(A.T, A)), np.dot(A.T, b))
+            except np.linalg.LinAlgError as e:
                 # x = np.dot(np.linalg.inv( np.dot(A.T, A)), np.dot(A.T, b))
                 x = np.linalg.solve(np.dot(A.T, A), np.dot(A.T, b))
-            except np.linalg.LinAlgError as e:
-                x = np.dot(np.linalg.pinv(np.dot(A.T, A)), np.dot(A.T, b))
             
             self.alpha,     self.alpha0    = x[0:s, :], np.zeros([1, x.shape[1]])
             self.trend_1st, self.trend_2nd = np.zeros([1, x.shape[1]]), np.zeros([1, x.shape[1]])
@@ -1332,10 +1619,10 @@ class Dickey_Fuller_Test:
             A = np.hstack([x_data, np.ones([num, 1])])
             b = y_data
             try:
+                x = np.dot(np.linalg.pinv(np.dot(A.T, A)), np.dot(A.T, b))
+            except np.linalg.LinAlgError as e:
                 # x = np.dot(np.linalg.inv( np.dot(A.T, A)), np.dot(A.T, b))
                 x = np.linalg.solve(np.dot(A.T, A), np.dot(A.T, b))
-            except np.linalg.LinAlgError as e:
-                x = np.dot(np.linalg.pinv(np.dot(A.T, A)), np.dot(A.T, b))
             
             self.alpha,     self.alpha0    = x[0:s, :], x[s, :]
             self.trend_1st, self.trend_2nd = np.zeros([1, x.shape[1]]), np.zeros([1, x.shape[1]])
@@ -1344,10 +1631,10 @@ class Dickey_Fuller_Test:
             A = np.hstack([x_data, np.ones([num, 1]), np.arange(1, num+1).reshape([num, 1])])
             b = y_data
             try:
+                x = np.dot(np.linalg.pinv(np.dot(A.T, A)), np.dot(A.T, b))
+            except np.linalg.LinAlgError as e:
                 # x = np.dot(np.linalg.inv( np.dot(A.T, A)), np.dot(A.T, b))
                 x = np.linalg.solve(np.dot(A.T, A), np.dot(A.T, b))
-            except np.linalg.LinAlgError as e:
-                x = np.dot(np.linalg.pinv(np.dot(A.T, A)), np.dot(A.T, b))
             
             self.alpha,     self.alpha0    = x[0:s, :], x[s, :]
             self.trend_1st, self.trend_2nd = x[s+1, :], np.zeros([1, x.shape[1]])
@@ -1356,10 +1643,10 @@ class Dickey_Fuller_Test:
             A = np.hstack([x_data, np.ones([num, 1]), np.arange(1, num+1).reshape([num, 1]), np.arange(1, num+1).reshape([num, 1]) ** 2])
             b = y_data
             try:
+                x = np.dot(np.linalg.pinv(np.dot(A.T, A)), np.dot(A.T, b))
+            except np.linalg.LinAlgError as e:
                 # x = np.dot(np.linalg.inv( np.dot(A.T, A)), np.dot(A.T, b))
                 x = np.linalg.solve(np.dot(A.T, A), np.dot(A.T, b))
-            except np.linalg.LinAlgError as e:
-                x = np.dot(np.linalg.pinv(np.dot(A.T, A)), np.dot(A.T, b))
             
             self.alpha,     self.alpha0    = x[0:s, :], x[s, :]
             self.trend_1st, self.trend_2nd = x[s+1, :], x[s+2, :]
@@ -1403,6 +1690,11 @@ class Dickey_Fuller_Test:
         
         if type(time_data) is list:
             time_data = np.array(time_data)
+        
+        if type(test_data) is not np.ndarray:
+            print(f"type(test_data) = {type(test_data)}")
+            print("エラー：：Numpy型である必要があります。")
+            raise
         
         if (test_data.ndim != 2) or (test_data.shape[1] != 1) or (time_data.ndim != 2) or (time_data.shape[1] != 1):
             print(f"test_data dims  = {test_data.ndim}")
@@ -1483,6 +1775,11 @@ class Augmented_Dickey_Fuller_Test:
         if type(test_data) is list:
             test_data = np.array(test_data)
         
+        if type(test_data) is not np.ndarray:
+            print(f"type(test_data) = {type(test_data)}")
+            print("エラー：：Numpy型である必要があります。")
+            raise
+        
         if (test_data.ndim != 2) or (test_data.shape[1] != 1):
             print(f"test_data dims  = {test_data.ndim}")
             print(f"test_data shape = {test_data.shape}")
@@ -1537,10 +1834,10 @@ class Augmented_Dickey_Fuller_Test:
             A = x_data
             b = y_data
             try:
+                x = np.dot(np.linalg.pinv(np.dot(A.T, A)), np.dot(A.T, b))
+            except np.linalg.LinAlgError as e:
                 # x = np.dot(np.linalg.inv( np.dot(A.T, A)), np.dot(A.T, b))
                 x = np.linalg.solve(np.dot(A.T, A), np.dot(A.T, b))
-            except np.linalg.LinAlgError as e:
-                x = np.dot(np.linalg.pinv(np.dot(A.T, A)), np.dot(A.T, b))
             
             self.alpha,     self.alpha0    = x[0:s, :], np.zeros([1, x.shape[1]])
             self.trend_1st, self.trend_2nd = np.zeros([1, x.shape[1]]), np.zeros([1, x.shape[1]])
@@ -1549,10 +1846,10 @@ class Augmented_Dickey_Fuller_Test:
             A = np.hstack([x_data, np.ones([num, 1])])
             b = y_data
             try:
+                x = np.dot(np.linalg.pinv(np.dot(A.T, A)), np.dot(A.T, b))
+            except np.linalg.LinAlgError as e:
                 # x = np.dot(np.linalg.inv( np.dot(A.T, A)), np.dot(A.T, b))
                 x = np.linalg.solve(np.dot(A.T, A), np.dot(A.T, b))
-            except np.linalg.LinAlgError as e:
-                x = np.dot(np.linalg.pinv(np.dot(A.T, A)), np.dot(A.T, b))
             
             self.alpha,     self.alpha0    = x[0:s, :], x[s, :]
             self.trend_1st, self.trend_2nd = np.zeros([1, x.shape[1]]), np.zeros([1, x.shape[1]])
@@ -1561,10 +1858,10 @@ class Augmented_Dickey_Fuller_Test:
             A = np.hstack([x_data, np.ones([num, 1]), np.arange(1, num+1).reshape([num, 1])])
             b = y_data
             try:
+                x = np.dot(np.linalg.pinv(np.dot(A.T, A)), np.dot(A.T, b))
+            except np.linalg.LinAlgError as e:
                 # x = np.dot(np.linalg.inv( np.dot(A.T, A)), np.dot(A.T, b))
                 x = np.linalg.solve(np.dot(A.T, A), np.dot(A.T, b))
-            except np.linalg.LinAlgError as e:
-                x = np.dot(np.linalg.pinv(np.dot(A.T, A)), np.dot(A.T, b))
             
             self.alpha,     self.alpha0    = x[0:s, :], x[s, :]
             self.trend_1st, self.trend_2nd = x[s+1, :], np.zeros([1, x.shape[1]])
@@ -1573,10 +1870,10 @@ class Augmented_Dickey_Fuller_Test:
             A = np.hstack([x_data, np.ones([num, 1]), np.arange(1, num+1).reshape([num, 1]), np.arange(1, num+1).reshape([num, 1]) ** 2])
             b = y_data
             try:
+                x = np.dot(np.linalg.pinv(np.dot(A.T, A)), np.dot(A.T, b))
+            except np.linalg.LinAlgError as e:
                 # x = np.dot(np.linalg.inv( np.dot(A.T, A)), np.dot(A.T, b))
                 x = np.linalg.solve(np.dot(A.T, A), np.dot(A.T, b))
-            except np.linalg.LinAlgError as e:
-                x = np.dot(np.linalg.pinv(np.dot(A.T, A)), np.dot(A.T, b))
             
             self.alpha,     self.alpha0    = x[0:s, :], x[s, :]
             self.trend_1st, self.trend_2nd = x[s+1, :], x[s+2, :]
@@ -1622,6 +1919,16 @@ class Augmented_Dickey_Fuller_Test:
         
         if type(time_data) is list:
             time_data = np.array(time_data)
+        
+        if type(test_data) is not np.ndarray:
+            print(f"type(test_data) = {type(test_data)}")
+            print("エラー：：Numpy型である必要があります。")
+            raise
+        
+        if type(time_data) is not np.ndarray:
+            print(f"type(time_data) = {type(time_data)}")
+            print("エラー：：Numpy型である必要があります。")
+            raise
         
         if (test_data.ndim != 2) or (time_data.ndim != 2) or (time_data.shape[1] != 1):
             print(f"test_data dims  = {test_data.ndim}")

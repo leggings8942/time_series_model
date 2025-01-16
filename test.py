@@ -1,5 +1,10 @@
+import datetime
 import numpy as np
 import pandas as pd
+from dateutil.relativedelta import relativedelta
+from tqdm.notebook import tqdm
+from tqdm.contrib import tzip, tenumerate, tmap
+
 from pyspark.sql import SparkSession
 from pyspark.sql import DataFrame
 from pyspark.storagelevel import StorageLevel
@@ -7,11 +12,15 @@ from pyspark.sql.functions import col
 import pyspark.sql.types as pstype
 import pyspark.sql.functions as F
 import pyspark as ps
-from statsmodels.tsa.vector_ar.var_model import VAR
-from statsmodels.tsa.stattools import adfuller
-from time_series_model import Dickey_Fuller_Test
 
-np.set_printoptions(threshold=100, precision=4, linewidth=10000)
+import matplotlib as mlt
+import matplotlib.pyplot as plt
+import japanize_matplotlib
+
+from time_series_model import *
+
+from sklearn.linear_model import ElasticNet
+
 ps_conf = ps.SparkConf().set("spark.logConf", "false")\
             .set("spark.executor.memory", "12g")\
             .set("spark.driver.memory", "4g")\
@@ -24,98 +33,60 @@ ps_conf = ps.SparkConf().set("spark.logConf", "false")\
 spark = SparkSession.builder.config(conf=ps_conf).getOrCreate()
 
 SPECIFIED_PATH = "csv_data/"
-SPECIFIED_DATE = "20240918"
+SPECIFIED_DATE = "20241120"
 SPECIFIED_CSV  = SPECIFIED_PATH + SPECIFIED_DATE
+input_path  = SPECIFIED_CSV + "_raw_data_sumida_bunka.csv"
+df_raw_data = spark.read.option("inferSchema", "True").option("header", "True").csv(input_path)
+df_raw_data.persist(StorageLevel.MEMORY_AND_DISK_DESER)
 
-input_path = SPECIFIED_CSV + "_c-united_config.csv"
-df_config  = spark.read.option("inferSchema", "True").option("header", "True").csv(input_path)
-df_config.persist(StorageLevel.MEMORY_AND_DISK_DESER)
+utid_list = sorted(df_raw_data.select("unit_id").drop_duplicates().rdd.flatMap(lambda x: x).collect())
 
-utid_list = df_config.select("unit_id").drop_duplicates().rdd.flatMap(lambda x: x).collect()
-spid_list = df_config.select("shop_id").drop_duplicates().rdd.flatMap(lambda x: x).collect()
+SPECIFIED_PAST = (datetime.datetime.strptime(SPECIFIED_DATE, '%Y%m%d') - relativedelta(days=1) + datetime.timedelta(hours=9)).strftime('%Y-%m-%d')
 
-#pos data 前処理
-input_path  = SPECIFIED_CSV + "_pos_data_table.csv"
-df_pos_data = spark.read.option('inferSchema', 'True').option('header', 'True').csv(input_path)\
-				.select(
-					"shop_id",
-                    "レシートＮｏ．",
-                    "商品種別",
-                    "商品コード",
-                    F.regexp_replace(col("商品名称（または券名称）"), "[ 　]", "").alias("商品名称（または券名称）"),
-                    "オーダー時刻",
-                    "単価",
-                    "数量",
-                    "合計金額",
-                    "date"
-				)\
-				.filter(col("商品名称（または券名称）") != "")\
-				.groupBy("shop_id", "date", "レシートＮｏ．").agg(
-                    F.last("オーダー時刻").alias("オーダー時刻"),
-                    F.sum(F.when(col("商品種別") == "Y", 1).otherwise(0)).alias("レシートあたりのセット商品の数"),
-                    F.sum("数量").alias("総売上点数"),
-                    F.sum("合計金額").alias("総売上"),
-				)\
-                .withColumn("レシートあたりのセット商品の数", F.when(col("レシートあたりのセット商品の数") == 0, 1)
-                            								.otherwise(col("レシートあたりのセット商品の数")))\
-                .withColumn("オーダー時刻", (F.col("オーダー時刻") / 100).cast("int"))\
-                .withColumnRenamed("レシートあたりのセット商品の数", "来店者数")\
-                .withColumnRenamed("オーダー時刻", "hour")
-df_pos_data = df_pos_data.groupBy("shop_id", "date", "hour").agg(
-                    F.sum("来店者数").alias("来店者数"),
-                    F.sum("総売上点数").alias("総売上点数"),
-                    F.sum("総売上").alias("総売上"),
-				)\
-                .select(["shop_id", "date", "hour", "来店者数", "総売上点数", "総売上"])\
-                .orderBy(col("shop_id").asc(), col("date").asc(), col("hour").asc())
-df_pos_data = df_pos_data\
-    				.withColumn("date", F.from_unixtime(F.unix_timestamp("date") + F.col("hour") * 3600))\
-                    .drop("hour")\
-                    .orderBy(col("shop_id").asc(), col("date").asc())
-df_pos_data = df_pos_data\
-					.join(df_config.select(["shop_id", "caption"]), on="shop_id", how="inner")\
-                    .select(["shop_id", "caption", "date", "来店者数", "総売上点数", "総売上"])\
-                    .orderBy(col("shop_id").asc(), col("date").asc())
-pd_pos_data  = df_pos_data.select(["shop_id", "caption", "date", "来店者数"]).toPandas()
-pd_tmp_data1 = pd_pos_data[pd_pos_data["shop_id"] == 1189] # カフェ・ド・クリエグランサンシャイン通り店
-pd_tmp_data2 = pd_pos_data[pd_pos_data["shop_id"] == 1616] # カフェ・ド・クリエ日比谷通り内幸町店
-pd_tmp_data3 = pd_pos_data[pd_pos_data["shop_id"] == 1428] # カフェ・ド・クリエ札幌オーロラタウン店
-pd_tmp_data4 = pd_pos_data[pd_pos_data["shop_id"] == 1550] # カフェ・ド・クリエ博多大博通店
-pd_pos_data  = pd.merge(pd_tmp_data1, pd_tmp_data2, on="date", how="inner", suffixes=['_1', '_2'])
-pd_pos_data  = pd.merge(pd_pos_data,  pd_tmp_data3, on="date", how="inner", suffixes=['_2', '_3'])
-pd_pos_data  = pd.merge(pd_pos_data,  pd_tmp_data4, on="date", how="inner", suffixes=['_3', '_4'])
-pd_pos_data  = pd_pos_data[["date", "来店者数_1", "来店者数_2", "来店者数_3", "来店者数_4"]]
-pd_pos_data  = pd_pos_data.rename(columns={
-    								"来店者数_1": "カフェ・ド・クリエグランサンシャイン通り店",
-                                    "来店者数_2": "カフェ・ド・クリエ日比谷通り内幸町店",
-                                    "来店者数_3": "カフェ・ド・クリエ札幌オーロラタウン店",
-                                    "来店者数_4": "カフェ・ド・クリエ博多大博通店"
-                                })
-pd_pos_data  = pd_pos_data[[
-    				"date",
-                    "カフェ・ド・クリエグランサンシャイン通り店",
-                    "カフェ・ド・クリエ日比谷通り内幸町店",
-                    "カフェ・ド・クリエ札幌オーロラタウン店",
-                    "カフェ・ド・クリエ博多大博通店"
-                ]]
-del pd_tmp_data1
-del pd_tmp_data2
-del pd_tmp_data3
-del pd_tmp_data4
-pd_pos_data
+start_time = f'{SPECIFIED_PAST} 00:00:00'
+end_time = f'{SPECIFIED_PAST} 23:59:00'
+# 1分単位の時間列を作成
+time_range = pd.date_range(start=start_time, end=end_time, freq='min')
+# DataFrameに変換
+df_time = pd.DataFrame(time_range, columns=['datetime'])
+df_time = spark.createDataFrame(df_time)\
+				.withColumn('hour', F.hour(col('datetime')))
 
+df_by1min = spark.read\
+				.option('header', True)\
+				.option('inferSchema', True)\
+           		.csv(SPECIFIED_CSV + "_1min_data_sumida_bunka.csv")
 
-x_data = pd_pos_data[["カフェ・ド・クリエグランサンシャイン通り店", "カフェ・ド・クリエ日比谷通り内幸町店", "カフェ・ド・クリエ札幌オーロラタウン店", "カフェ・ド・クリエ博多大博通店"]].values.tolist()
-x_train, x_test = x_data[0:3600], x_data[3600:]
+for unit_id in utid_list:
+    df_tmp  = df_by1min\
+        		.filter(col('unit_id') == unit_id)\
+          		.select(['minute', '1min_count'])\
+            	.withColumnRenamed('minute',     'datetime')\
+                .withColumnRenamed('1min_count', unit_id)
+    df_time = df_time.join(df_tmp, on='datetime', how='left')
+df_time = df_time\
+			.fillna(0)\
+    		.orderBy('datetime')
+df_time.persist(StorageLevel.MEMORY_AND_DISK_DESER)
 
-import sklearn.linear_model as lm
-model = lm.Ridge(alpha=1, max_iter=10000000, tol=0.0)
+SPECIFIED_HOUR = 13
 
-lags   = 4
-x_data = np.array([np.array(x_test)[t-lags : t][::-1].ravel() for t in range(lags, len(x_test))])
-y_data = x_test[lags:]
-model.fit(x_data, y_data)
-mean = model.predict(x_data)
+pd_data = df_time.toPandas()
+pd_data = pd_data[pd_data['hour'] == SPECIFIED_HOUR]
+pd_data = pd_data[utid_list]
+pd_data
 
-print(f"alpha0:{model.intercept_}  alpha:{model.coef_.T}", flush=True)
+test_data = pd_data.values.tolist()
+test_data
+
+model = ElasticNet(alpha=1, l1_ratio=0.1, max_iter=1000000, tol=1e-6)
+
+lag   = 4
+x_tmp = np.array([np.array(test_data)[t-lag : t][::-1].ravel() for t in range(lag, len(test_data))])
+y_tmp = test_data[lag:]
+model.fit(x_tmp, y_tmp)
+mean  = model.predict(x_tmp)
+
+mse = np.sum((y_tmp - mean) ** 2) / len(y_tmp)
+mse
 
