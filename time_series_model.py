@@ -65,25 +65,28 @@ def soft_threshold(x, α):
     return np.sign(x) * np.maximum(np.abs(x) - α, 0)
 
 class Update_Rafael:
-    def __init__(self, alpha=0.001, beta1=0.9, beta2=0.999, beta3=0.9999, rate=1e-3):
+    def __init__(self, alpha=0.001, beta1=0.9, beta2=0.999, beta3=0.99, rate=0.1):
         self.alpha = alpha
         self.beta1 = beta1
         self.beta2 = beta2
         self.beta3 = beta3
         self.rate  = rate
+        self.time  = 1
         self.beta1t = self.beta1
         self.beta2t = self.beta2
         self.beta3t = self.beta3
         self.m = np.array([])
         self.v = np.array([])
         self.w = np.array([])
-        self.isFirst = True
+        self.ρ_inf = 0
+        self.ρ_t   = 0
 
     def update(self, grads):
-        if self.isFirst == True:
+        if self.time == 1:
             self.m = np.zeros(grads.shape)
             self.v = np.zeros(grads.shape)
             self.w = np.zeros(grads.shape)
+            self.ρ_inf = 2 / (1 - self.beta2) - 1
 
         self.m = self.beta1 * self.m + (1 - self.beta1) * grads
         m_hat = self.m / (1 - self.beta1t)
@@ -91,18 +94,21 @@ class Update_Rafael:
         self.v = self.beta2 * self.v + (1 - self.beta2) * (grads ** 2)
         v_hat = self.v / (1 - self.beta2t)
 
-        if self.isFirst == True:
-            self.w = self.beta3 * self.w + (1 - self.beta3) * 1
-            self.isFirst = False
-        else:
-            self.w = self.beta3 * self.w + (1 - self.beta3) * ((grads - m_hat) ** 2)
+        self.w = self.beta3 * self.w + (1 - self.beta3) * ((grads - m_hat) ** 2)
         w_hat = self.w / (1 - self.beta3t)
         
+        self.ρ_t = self.ρ_inf - 2 * self.time * self.beta2t / (1 - self.beta2t)
+        
+        self.time   += 1
         self.beta1t *= self.beta1
         self.beta2t *= self.beta2
         self.beta3t *= self.beta3
-
-        return self.alpha * np.sign(grads) * np.abs(m_hat) / np.sqrt(v_hat + 1e-8) / np.sqrt(w_hat + self.rate)
+        
+        if self.ρ_t > 4:
+            r_t = np.sqrt((self.ρ_t - 4) * (self.ρ_t - 2) * self.ρ_inf / ((self.ρ_inf - 4) * (self.ρ_inf - 2) * self.ρ_t))
+            return self.alpha * r_t * np.sign(grads) * np.abs(m_hat) / np.sqrt(v_hat * (w_hat + self.rate))
+        else:
+            return self.alpha * np.sign(grads)
 
 
 
@@ -1644,7 +1650,7 @@ class Non_Negative_Vector_Auto_Regressive:
         
         return True
 
-    def fit(self, lags:int=1, offset:int=0, solver="Nesterov Accelerateed Gradient", visible_flg:bool=False) -> bool:
+    def fit(self, lags:int=1, offset:int=0, solver="Optimizer Rafael", visible_flg:bool=False) -> bool:
         # caution!!!
         # solverとして最急降下法を使用する際に注意が必要である
         # 勾配降下法は、対象の最適化パラメータのスケールに弱い
@@ -1781,6 +1787,44 @@ class Non_Negative_Vector_Auto_Regressive:
                 
                 if (idx != 1) and (np.abs(Base_Loss - mse) <= self.tol):
                     x_new = x_k_m_1
+                    break
+                else:
+                    Base_Loss = mse
+            
+            x = x_new
+            self.alpha, self.alpha0 = x[0:expvars, :], x[expvars, :]
+            self.alpha0 = self.alpha0.reshape([1, x.shape[1]])
+            
+            if visible_flg:
+                A       = np.hstack([x_data, np.ones([data_num, 1])])
+                B       = y_data
+                X       = np.vstack([self.alpha, self.alpha0])
+                DIFF = B - np.dot(A, np.exp(X))
+                DIFF = np.dot(DIFF.T, DIFF)
+                OBJE = 1 / 2 * np.sum(np.diag(DIFF))
+                print("平均二乗誤差(MSE):", np.sum(np.diag(DIFF)) / data_num, flush=True)
+                print("目的関数(Objective): ", OBJE)
+        
+        elif solver == "Optimizer Rafael":
+            A            = np.hstack([x_data, np.ones([data_num, 1])])
+            b            = y_data
+            x_new        = self.random.random([A.shape[1], b.shape[1]])
+            Base_Loss    = 0
+            Optimizer    = Update_Rafael()
+            for idx in range(0, self.max_iterate):
+                ΔEXPX  = np.exp(x_new)
+                ΔLoss  = b - np.dot(A, ΔEXPX)
+                ΔDiff  = np.dot(A.T, ΔLoss) * ΔEXPX
+                
+                diff_x = Optimizer.update(ΔDiff)
+                x_new  = x_new + diff_x
+                
+                mse = np.sum(ΔLoss ** 2)
+                if visible_flg and (idx % 1000 == 0):
+                    update_diff = np.sum(diff_x ** 2)
+                    print(f"ite:{idx+1}  mse:{mse}  update_diff:{update_diff} diff:{np.abs(Base_Loss - mse)}")
+                
+                if np.abs(Base_Loss - mse) <= self.tol:
                     break
                 else:
                     Base_Loss = mse
@@ -1947,7 +1991,7 @@ class Non_Negative_Vector_Auto_Regressive:
 
         return inf
 
-    def select_order(self, maxlag=15, ic="aic", solver="Nesterov Accelerateed Gradient", isVisible=False) -> int:
+    def select_order(self, maxlag=15, ic="aic", solver="Optimizer Rafael", isVisible=False) -> int:
         if isVisible == True:
             print(f"SVAR model | {ic}", flush=True)
         
