@@ -106,7 +106,7 @@ class Update_Rafael:
         
         if self.ρ_t > 4:
             r_t = np.sqrt((self.ρ_t - 4) * (self.ρ_t - 2) * self.ρ_inf / ((self.ρ_inf - 4) * (self.ρ_inf - 2) * self.ρ_t))
-            return self.alpha * r_t * np.sign(grads) * np.abs(m_hat) / np.sqrt(v_hat * (w_hat + self.rate))
+            return self.alpha * r_t * np.sign(grads) * np.abs(m_hat) / np.maximum(np.sqrt(v_hat * (w_hat + self.rate)), 1e-32)
         else:
             return self.alpha * np.sign(grads)
 
