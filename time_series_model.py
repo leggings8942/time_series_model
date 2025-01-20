@@ -1699,9 +1699,10 @@ class Non_Negative_Vector_Auto_Regressive:
             self.y_std_dev = np.ones( objvars)
 
         
-        # 本ライブラリで実装されているアルゴリズムは以下の4点となる
+        # 本ライブラリで実装されているアルゴリズムは以下の3点となる
         # ・勾配降下法(GD: Gradient Descent)
         # ・ネステロフの加速勾配法(NAG: Nesterov Accelerateed Gradient)
+        # ・適応的勾配降下法(AGD: Adaptive Gradient Descent(Rafeal))
         # これらのアルゴリズムは全て同じ目的関数を最適化している
         # 広く認められているわけではないため使用の際には注意が必要であるが、本ライブラリにて実装済みの
         # これら2種類のアルゴリズムが想定する目的関数は以下のとおり
@@ -1715,7 +1716,7 @@ class Non_Negative_Vector_Auto_Regressive:
         # math: \end{split}
         # math: \end{equation}
         # 参考までに各オプションごとの実行速度は以下の通り
-        # NAG  >>  GD
+        # AGD  >>  NAG  >>  GD
 
 
         if   solver == "Gradient Descent":
