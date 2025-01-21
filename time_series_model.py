@@ -1681,6 +1681,41 @@ class Non_Negative_Vector_Auto_Regressive:
         
         # 標準化指定の有無
         if self.isStandardization:
+            # 非負制約付きのVARモデルでは、y軸方向の標準化にアレンジを加えてある
+            # 具体的には、平均値から2.58*標準偏差を引いた値を採用することにしている
+            # 2.58という係数を採用した理由については、正規分布において有意水準1%(片側0.5%)であるからである
+            # 実際には、y軸方向のデータセットが何の確率分布にしたがっているかは不明であるため注意が必要である
+            # さて、なぜこのような値を新しい平均値として採用したかというと学習パラメータのスケールを大きくしたかったからという点が挙げられる
+            # そもそも非負制約付きVARモデルを採用した理由は、学習後のパラメータ同士の比較を行いたかったからである
+            # しかし、一般的な標準化方式では切片パラメータが非常に0に近しくなり比較がやりにくくなる
+            # そこで、x軸方向のデータセットの大きさを制約したままy軸方向のデータセットの制約を緩くすることで、切片を含む全ての学習パラメータのスケールを大きくする
+            # 具体的には以下のような数式イメージを想定している
+            # X = 説明変数x の行列(説明変数数expvars ✖️ 目的変数数objvars)
+            # Y = 目的変数y の行列(データ数data_num ✖️ 目的変数数objvars)
+            # A = 係数の行列(説明変数数expvars ✖️ 目的変数数objvars)
+            # b = 切片のベクトル(目的変数数objvars)
+            # math: \begin{equation}
+            # math: \begin{split}
+            # math: Y_mi &= A_1i X_1i + A_2i X_2i + A_3i X_3i + ... + A_{expvars i} X_{expvars i} + b_i
+            # math: \end{split}
+            # math: \end{equation}
+            # ここで、一般的な標準化処理を施すと以下のように解釈できる
+            # x = 平均0 分散1 のランダム定数ベクトル
+            # y = 平均0 分散1 のランダム定数
+            # a = 学習パラメータベクトル(非負制約)
+            # b = 学習パラメータ定数(非負制約)
+            # math: \begin{equation}
+            # math: \begin{split}
+            # math: y &= a_1 x_1 + a_2 x_2 + a_3 x_3 + ... + a_expvars x_expvars + b
+            # math: \end{split}
+            # math: \end{equation}
+            # この上記の数式より各x成分のスケールとy値のスケールが一致していることがわかる
+            # この事実は各学習パラメータのスケール ≒ 1 かつ b ≒ 0 であることを意味しており、係数の比較を行う上で不都合である
+            # なぜならば、スケール比が1:1であると最尤推定時にパラメータのスケールに対して鈍感となるためである
+            # この性質は「学習パラメータ(非負な値)同士を比較する」という目的にそぐわなくなる
+            # そのためy値を 平均c 分散1 のランダム定数に変換することで、各x成分のスケール << y値のスケール を保証する
+            # これにより各学習パラメータのスケールをy値のスケールに合わせる必要が出てくるため、最尤推定時にパラメータのスケールに対して敏感となる
+            
             # x軸の標準化
             self.x_mean    = np.mean(x_data, axis=0)
             self.x_std_dev = np.std( x_data, axis=0)
@@ -1688,7 +1723,7 @@ class Non_Negative_Vector_Auto_Regressive:
             x_data = (x_data - self.x_mean) / self.x_std_dev
             
             # y軸の標準化
-            self.y_mean    = np.mean(y_data, axis=0)
+            self.y_mean    = np.mean(y_data, axis=0) - 2.58 * np.std( y_data, axis=0)
             self.y_std_dev = np.std( y_data, axis=0)
             self.y_std_dev[self.y_std_dev < 1e-32] = 1
             y_data = (y_data - self.y_mean) / self.y_std_dev
