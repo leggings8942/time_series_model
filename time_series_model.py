@@ -1715,6 +1715,15 @@ class Non_Negative_Vector_Auto_Regressive:
             # この性質は「学習パラメータ(非負な値)同士を比較する」という目的にそぐわなくなる
             # そのためy値を 平均c 分散1 のランダム定数に変換することで、各x成分のスケール << y値のスケール を保証する
             # これにより各学習パラメータのスケールをy値のスケールに合わせる必要が出てくるため、最尤推定時にパラメータのスケールに対して敏感となる
+            # 参考に標準正規分布の確立分布　 数表を掲載する
+            # URL:https://kyozaikenkyu-statistics.blog.jp/%E6%A8%99%E6%BA%96%E6%AD%A3%E8%A6%8F%E5%88%86%E5%B8%83%E6%95%B0%E8%A1%A8.pdf
+            # 主に以下の値が利用されると想定する
+            # 優位水準30%  (片側15.0%)・・・1.04
+            # 優位水準20%  (片側10.0%)・・・1.28
+            # 優位水準10%  (片側5.0%) ・・・1.64
+            # 優位水準5%   (片側2.5%) ・・・1.96
+            # 優位水準3%   (片側1.5%) ・・・2.17
+            # 優位水準1%   (片側0.5%) ・・・2.58
             
             # x軸の標準化
             self.x_mean    = np.mean(x_data, axis=0)
@@ -1723,7 +1732,7 @@ class Non_Negative_Vector_Auto_Regressive:
             x_data = (x_data - self.x_mean) / self.x_std_dev
             
             # y軸の標準化
-            self.y_mean    = np.mean(y_data, axis=0) - 2.58 * np.std( y_data, axis=0)
+            self.y_mean    = np.mean(y_data, axis=0) - 1.04 * np.std( y_data, axis=0)
             self.y_std_dev = np.std( y_data, axis=0)
             self.y_std_dev[self.y_std_dev < 1e-32] = 1
             y_data = (y_data - self.y_mean) / self.y_std_dev
