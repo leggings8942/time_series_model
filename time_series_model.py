@@ -64,17 +64,20 @@ def log_likelihood_of_normal_distrubution(x, mean, cov):
 def soft_threshold(x, α):
     return np.sign(x) * np.maximum(np.abs(x) - α, 0)
 
+def soft_maximum(x, α):
+    sign = np.empty_like(x)
+    sign[x >= 0] =  1
+    sign[x <  0] = -1
+    return sign * np.maximum(np.abs(x), α)
+
 class Update_Rafael:
-    def __init__(self, alpha=0.001, beta1=0.9, beta2=0.999, beta3=0.99, rate=0.1):
+    def __init__(self, alpha=1, beta1=0.9, beta2=0.99):
         self.alpha = alpha
         self.beta1 = beta1
         self.beta2 = beta2
-        self.beta3 = beta3
-        self.rate  = rate
         self.time  = 1
         self.beta1t = self.beta1
         self.beta2t = self.beta2
-        self.beta3t = self.beta3
         self.m = np.array([])
         self.v = np.array([])
         self.w = np.array([])
@@ -94,19 +97,18 @@ class Update_Rafael:
         self.v = self.beta2 * self.v + (1 - self.beta2) * (grads ** 2)
         v_hat = self.v / (1 - self.beta2t)
 
-        self.w = self.beta3 * self.w + (1 - self.beta3) * ((grads - m_hat) ** 2)
-        w_hat = self.w / (1 - self.beta3t)
+        self.w = self.beta2 * self.w + (1 - self.beta2) * ((grads / soft_maximum(m_hat, 1e-32) - 1) ** 2)
+        w_hat = self.w / (1 - self.beta2t)
         
         self.ρ_t = self.ρ_inf - 2 * self.time * self.beta2t / (1 - self.beta2t)
         
         self.time   += 1
         self.beta1t *= self.beta1
         self.beta2t *= self.beta2
-        self.beta3t *= self.beta3
         
         if self.ρ_t > 4:
             r_t = np.sqrt((self.ρ_t - 4) * (self.ρ_t - 2) * self.ρ_inf / ((self.ρ_inf - 4) * (self.ρ_inf - 2) * self.ρ_t))
-            return self.alpha * r_t * np.sign(grads) * np.abs(m_hat) / np.maximum(np.sqrt(v_hat * (w_hat + self.rate)), 1e-32)
+            return self.alpha * r_t * m_hat / np.maximum(np.sqrt(v_hat * w_hat), 1e-32)
         else:
             return self.alpha * np.sign(grads)
 
@@ -1732,7 +1734,7 @@ class Non_Negative_Vector_Auto_Regressive:
             x_data = (x_data - self.x_mean) / self.x_std_dev
             
             # y軸の標準化
-            self.y_mean    = np.mean(y_data, axis=0) - 1.04 * np.std( y_data, axis=0)
+            self.y_mean    = np.mean(y_data, axis=0) - 1.28 * np.std( y_data, axis=0)
             self.y_std_dev = np.std( y_data, axis=0)
             self.y_std_dev[self.y_std_dev < 1e-32] = 1
             y_data = (y_data - self.y_mean) / self.y_std_dev
