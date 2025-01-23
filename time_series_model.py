@@ -71,8 +71,7 @@ def soft_maximum(x, α):
     return sign * np.maximum(np.abs(x), α)
 
 class Update_Rafael:
-    def __init__(self, alpha=1, beta1=0.9, beta2=0.99):
-        self.alpha = alpha
+    def __init__(self, beta1=0.9, beta2=0.99):
         self.beta1 = beta1
         self.beta2 = beta2
         self.time  = 1
@@ -81,36 +80,32 @@ class Update_Rafael:
         self.m = np.array([])
         self.v = np.array([])
         self.w = np.array([])
-        self.ρ_inf = 0
-        self.ρ_t   = 0
+        self.σ_coef = 0
 
     def update(self, grads):
         if self.time == 1:
             self.m = np.zeros(grads.shape)
             self.v = np.zeros(grads.shape)
             self.w = np.zeros(grads.shape)
-            self.ρ_inf = 2 / (1 - self.beta2) - 1
+            self.σ_coef = 1 + 1 / self.beta2
 
         self.m = self.beta1 * self.m + (1 - self.beta1) * grads
         m_hat = self.m / (1 - self.beta1t)
 
         self.v = self.beta2 * self.v + (1 - self.beta2) * (grads ** 2)
-        v_hat = self.v / (1 - self.beta2t)
+        v_hat = self.v * self.σ_coef / ((1 - self.beta2t) * (1 + self.beta2t * self.beta2t / self.beta2))
 
         self.w = self.beta2 * self.w + (1 - self.beta2) * ((grads / soft_maximum(m_hat, 1e-32) - 1) ** 2)
-        w_hat = self.w / (1 - self.beta2t)
-        
-        self.ρ_t = self.ρ_inf - 2 * self.time * self.beta2t / (1 - self.beta2t)
+        w_hat = self.w * self.σ_coef / ((1 - self.beta2t) * (1 + self.beta2t * self.beta2t / self.beta2))
         
         self.time   += 1
         self.beta1t *= self.beta1
         self.beta2t *= self.beta2
         
-        if self.ρ_t > 4:
-            r_t = np.sqrt((self.ρ_t - 4) * (self.ρ_t - 2) * self.ρ_inf / ((self.ρ_inf - 4) * (self.ρ_inf - 2) * self.ρ_t))
-            return self.alpha * r_t * m_hat / np.maximum(np.sqrt(v_hat * w_hat), 1e-32)
+        if self.time > 10:
+            return m_hat / np.maximum(np.sqrt(v_hat * w_hat), 1e-32)
         else:
-            return self.alpha * np.sign(grads)
+            return np.sign(grads)
 
 
 
