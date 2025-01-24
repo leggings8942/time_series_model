@@ -87,25 +87,27 @@ class Update_Rafael:
             self.m = np.zeros(grads.shape)
             self.v = np.zeros(grads.shape)
             self.w = np.zeros(grads.shape)
-            self.σ_coef = 1 + 1 / self.beta2
+            self.σ_coef = (1 + self.beta2) / 2
 
         self.m = self.beta1 * self.m + (1 - self.beta1) * grads
         m_hat = self.m / (1 - self.beta1t)
 
         self.v = self.beta2 * self.v + (1 - self.beta2) * (grads ** 2)
-        v_hat = self.v * self.σ_coef / ((1 - self.beta2t) * (1 + self.beta2t * self.beta2t / self.beta2))
-
         self.w = self.beta2 * self.w + (1 - self.beta2) * ((grads / soft_maximum(m_hat, 1e-32) - 1) ** 2)
-        w_hat = self.w * self.σ_coef / ((1 - self.beta2t) * (1 + self.beta2t * self.beta2t / self.beta2))
+        
+        if self.beta2 - self.beta2t > 0.1:
+            v_hat = self.v * self.σ_coef / (self.beta2 - self.beta2t)
+            w_hat = self.w * self.σ_coef / (self.beta2 - self.beta2t)
+            
+            output = m_hat / np.maximum(np.sqrt(v_hat * w_hat), 1e-32)
+        else:
+            output = np.sign(grads)
         
         self.time   += 1
         self.beta1t *= self.beta1
         self.beta2t *= self.beta2
         
-        if self.time > 10:
-            return m_hat / np.maximum(np.sqrt(v_hat * w_hat), 1e-32)
-        else:
-            return np.sign(grads)
+        return output
 
 
 
@@ -1862,7 +1864,7 @@ class Non_Negative_Vector_Auto_Regressive:
                 x_new  = x_new + diff_x
                 
                 mse = np.sum(ΔLoss ** 2)
-                if visible_flg and (idx % 1000 == 0):
+                if visible_flg and (idx % 100 == 0):
                     update_diff = np.sum(diff_x ** 2)
                     print(f"ite:{idx+1}  mse:{mse}  update_diff:{update_diff} diff:{np.abs(Base_Loss - mse)}")
                 
