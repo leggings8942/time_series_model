@@ -68,10 +68,10 @@ def soft_maximum(x, α):
     sign = np.empty_like(x)
     sign[x >= 0] =  1
     sign[x <  0] = -1
-    return sign * np.maximum(np.abs(x), α)
+    return sign * (np.abs(x) + α)
 
 class Update_Rafael:
-    def __init__(self, alpha=0.1, beta=0.9):
+    def __init__(self, alpha=0.01, beta=0.99, isSHC=False):
         self.alpha  = alpha
         self.beta   = beta
         self.time   = 0
@@ -80,6 +80,7 @@ class Update_Rafael:
         self.v = np.array([])
         self.w = np.array([])
         self.σ_coef = 0
+        self.isSHC = isSHC
 
     def update(self, grads):
         if self.time == 0:
@@ -88,6 +89,7 @@ class Update_Rafael:
             self.w = np.zeros(grads.shape)
             self.σ_coef = (1 + self.beta) / 2
         
+        ε = 1e-32
         self.time   += 1
         self.beta_t *= self.beta
 
@@ -95,22 +97,30 @@ class Update_Rafael:
         m_hat = self.m / (1 - self.beta_t)
 
         self.v = self.beta * self.v + (1 - self.beta) * (grads ** 2)
-        self.w = self.beta * self.w + (1 - self.beta) * ((grads / soft_maximum(m_hat, 1e-32) - 1) ** 2)
+        self.w = self.beta * self.w + (1 - self.beta) * ((grads / soft_maximum(m_hat, ε) - 1) ** 2)
         
         if self.beta - self.beta_t > 0.1:
-            v_hat    = self.v * self.σ_coef / (self.beta - self.beta_t)
-            w_hat    = self.w * self.σ_coef / (self.beta - self.beta_t)
+            v_hat  = self.v * self.σ_coef / (self.beta - self.beta_t)
+            w_hat  = self.w * self.σ_coef / (self.beta - self.beta_t)
+            σ_w    = np.sqrt(w_hat + ε)
+            σ_com  = np.sqrt((v_hat + w_hat + ε) / 2)
             
-            output = self.alpha * m_hat / np.maximum(np.sqrt((v_hat + w_hat) / 2), 1e-32)
+            output = m_hat / σ_com
+            
+            # self-healing canonicalization
+            if self.isSHC:
+                m_bese  = m_hat / np.linalg.norm(m_hat, axis=0)
+                vec_map = np.sum(σ_w * output * m_bese, axis=0) * m_bese
+                output  = vec_map / σ_w
         else:
-            output = self.alpha * np.sign(grads)
+            output = np.sign(grads)
         
-        return output
+        return self.alpha * output
 
 
 
 class Auto_Regressive:
-    def __init__(self, tol=1e-7, max_iterate=100000, learning_rate=0.001, random_state=None) -> None:
+    def __init__(self, tol=1e-7, max_iterate=100000, random_state=None) -> None:
         self.lags            = 0
         self.alpha           = np.array([], dtype=np.float64)
         self.alpha0          = np.float64(0.0)
@@ -118,7 +128,6 @@ class Auto_Regressive:
         self.tol             = tol
         self.data_num        = 0
         self.max_iterate     = max_iterate
-        self.correct_alpha   = Update_Rafael(alpha=learning_rate)
         self.learn_flg       = False
 
         self.random_state = random_state
@@ -323,7 +332,7 @@ class Auto_Regressive:
 
 
 class Vector_Auto_Regressive:
-    def __init__(self, train_data, tol=1e-7, max_iterate=100000, learning_rate=0.001, random_state=None) -> None:
+    def __init__(self, train_data, tol=1e-7, max_iterate=100000, random_state=None) -> None:
         if type(train_data) is pd.core.frame.DataFrame:
             train_data = train_data.to_numpy()
         
@@ -1765,27 +1774,23 @@ class Non_Negative_Vector_Auto_Regressive:
             b            = y_data
             L            = np.linalg.norm(A.T.dot(A), ord="fro")
             x_new        = self.random.random([A.shape[1], b.shape[1]])
-            Base_Loss    = 0
             for idx in range(0, self.max_iterate):
-                ΔEXPX  = np.exp(x_new)
-                ΔLoss  = b - np.dot(A, ΔEXPX)
-                ΔDiff  = np.dot(A.T, ΔLoss) * ΔEXPX
+                ΔSQUA  = np.square(x_new) / 2
+                ΔLoss  = b - np.dot(A, ΔSQUA)
+                ΔDiff  = np.dot(A.T, ΔLoss) * x_new
                 
                 rho    = 1 / L
                 diff_x = rho * ΔDiff
                 x_new  = x_new + diff_x
                 
-                mse = np.sum(ΔLoss ** 2)
+                update_diff = np.max(np.abs(ΔDiff))
                 if visible_flg and (idx % 1000 == 0):
-                    update_diff = np.sum(diff_x ** 2)
-                    print(f"ite:{idx+1}  mse:{mse}  update_diff:{update_diff} diff:{np.abs(Base_Loss - mse)}")
+                    print(f"ite:{idx+1}  ΔLoss:{np.max(np.abs(ΔLoss))}  update_diff:{update_diff}")
                 
-                if np.abs(Base_Loss - mse) <= self.tol:
+                if update_diff <= self.tol:
                     break
-                else:
-                    Base_Loss = mse
             
-            x = x_new
+            x = np.square(x_new) / 2
             self.alpha, self.alpha0 = x[0:expvars, :], x[expvars, :]
             self.alpha0 = self.alpha0.reshape([1, x.shape[1]])
             
@@ -1793,7 +1798,7 @@ class Non_Negative_Vector_Auto_Regressive:
                 A       = np.hstack([x_data, np.ones([data_num, 1])])
                 B       = y_data
                 X       = np.vstack([self.alpha, self.alpha0])
-                DIFF = B - np.dot(A, np.exp(X))
+                DIFF = B - np.dot(A, X)
                 DIFF = np.dot(DIFF.T, DIFF)
                 OBJE = 1 / 2 * np.sum(np.diag(DIFF))
                 print("平均二乗誤差(MSE):", np.sum(np.diag(DIFF)) / data_num, flush=True)
@@ -1806,11 +1811,10 @@ class Non_Negative_Vector_Auto_Regressive:
             x_new        = self.random.random([A.shape[1], b.shape[1]])
             x_k_m_1      = x_new.copy()
             time_k       = 0
-            Base_Loss    = 0
             for idx in range(0, self.max_iterate):
-                ΔEXPX  = np.exp(x_new)
-                ΔLoss  = b - np.dot(A, ΔEXPX)
-                ΔDiff  = np.dot(A.T, ΔLoss) * ΔEXPX
+                ΔSQUA  = np.square(x_new) / 2
+                ΔLoss  = b - np.dot(A, ΔSQUA)
+                ΔDiff  = np.dot(A.T, ΔLoss) * x_new
                 
                 rho    = 1 / L
                 diff_x = rho * ΔDiff
@@ -1822,18 +1826,15 @@ class Non_Negative_Vector_Auto_Regressive:
                 time_k  = time_k_a_1
                 x_k_m_1 = x_tmp
                 
-                mse = np.sum(ΔLoss ** 2)
+                update_diff = np.max(np.abs(ΔDiff))
                 if visible_flg and (idx % 1000 == 0):
-                    update_diff = np.sum(diff_x ** 2)
-                    print(f"ite:{idx+1}  mse:{mse}  update_diff:{update_diff} diff:{np.abs(Base_Loss - mse)}")
+                    print(f"ite:{idx+1}  ΔLoss:{np.max(np.abs(ΔLoss))}  update_diff:{update_diff}")
                 
-                if (idx != 1) and (np.abs(Base_Loss - mse) <= self.tol):
+                if (idx != 1) and (update_diff <= self.tol):
                     x_new = x_k_m_1
                     break
-                else:
-                    Base_Loss = mse
             
-            x = x_new
+            x = np.square(x_new) / 2
             self.alpha, self.alpha0 = x[0:expvars, :], x[expvars, :]
             self.alpha0 = self.alpha0.reshape([1, x.shape[1]])
             
@@ -1841,7 +1842,7 @@ class Non_Negative_Vector_Auto_Regressive:
                 A       = np.hstack([x_data, np.ones([data_num, 1])])
                 B       = y_data
                 X       = np.vstack([self.alpha, self.alpha0])
-                DIFF = B - np.dot(A, np.exp(X))
+                DIFF = B - np.dot(A, X)
                 DIFF = np.dot(DIFF.T, DIFF)
                 OBJE = 1 / 2 * np.sum(np.diag(DIFF))
                 print("平均二乗誤差(MSE):", np.sum(np.diag(DIFF)) / data_num, flush=True)
@@ -1851,27 +1852,23 @@ class Non_Negative_Vector_Auto_Regressive:
             A            = np.hstack([x_data, np.ones([data_num, 1])])
             b            = y_data
             x_new        = self.random.random([A.shape[1], b.shape[1]])
-            Base_Loss    = 0
-            Optimizer    = Update_Rafael()
+            Optimizer    = Update_Rafael(0.1, beta=0.9, isSHC=True)
             for idx in range(0, self.max_iterate):
-                ΔEXPX  = np.exp(x_new)
-                ΔLoss  = b - np.dot(A, ΔEXPX)
-                ΔDiff  = np.dot(A.T, ΔLoss) * ΔEXPX
+                ΔSQUA  = np.square(x_new) / 2
+                ΔLoss  = b - np.dot(A, ΔSQUA)
+                ΔDiff  = np.dot(A.T, ΔLoss) * x_new
                 
                 diff_x = Optimizer.update(ΔDiff)
                 x_new  = x_new + diff_x
                 
-                mse = np.sum(ΔLoss ** 2)
+                update_diff = np.max(np.abs(ΔDiff))
                 if visible_flg and (idx % 1000 == 0):
-                    update_diff = np.sum(diff_x ** 2)
-                    print(f"ite:{idx+1}  mse:{mse}  update_diff:{update_diff} diff:{np.abs(Base_Loss - mse)}")
+                    print(f"ite:{idx+1}  ΔLoss:{np.max(np.abs(ΔLoss))}  update_diff:{update_diff}")
                 
-                if np.abs(Base_Loss - mse) <= self.tol:
+                if update_diff <= self.tol:
                     break
-                else:
-                    Base_Loss = mse
             
-            x = x_new
+            x = np.square(x_new) / 2
             self.alpha, self.alpha0 = x[0:expvars, :], x[expvars, :]
             self.alpha0 = self.alpha0.reshape([1, x.shape[1]])
             
@@ -1879,12 +1876,63 @@ class Non_Negative_Vector_Auto_Regressive:
                 A       = np.hstack([x_data, np.ones([data_num, 1])])
                 B       = y_data
                 X       = np.vstack([self.alpha, self.alpha0])
-                DIFF = B - np.dot(A, np.exp(X))
+                DIFF = B - np.dot(A, X)
                 DIFF = np.dot(DIFF.T, DIFF)
                 OBJE = 1 / 2 * np.sum(np.diag(DIFF))
                 print("平均二乗誤差(MSE):", np.sum(np.diag(DIFF)) / data_num, flush=True)
                 print("目的関数(Objective): ", OBJE)
+        
+        elif solver == "Augmented Lagrangians Method":
+            A          = np.hstack([x_data, np.ones([data_num, 1])])
+            b          = y_data
+            slack      = np.ones([A.shape[1], b.shape[1]])
+            u_lagrange = np.zeros([A.shape[1], b.shape[1]])
+            x_new      = self.random.random([A.shape[1], b.shape[1]])
+            ρ          = 1
+            lr         = 0.01
+            for idx1 in range(0, self.max_iterate):
+                Optimizer_X = Update_Rafael(lr, beta=0.99, isSHC=True)
+                Optimizer_S = Update_Rafael(lr, beta=0.99, isSHC=True)
+                for idx2 in range(0, self.max_iterate):
+                    ΔLoss = b - np.dot(A, x_new)
+                    ΔDX   = -np.dot(A.T, ΔLoss) - u_lagrange - ρ * (np.square(slack) / 2 - x_new)
+                    ΔDS   = u_lagrange * slack + ρ * slack * (np.square(slack) / 2 - x_new)
+                
+                    diff_x = ΔDX
+                    x_new  = x_new - Optimizer_X.update(diff_x)
+                    diff_s = ΔDS
+                    slack  = slack - Optimizer_S.update(diff_s)
+
+                    update_diff = np.max(np.abs(diff_x))
+                    if visible_flg and (idx2 % 1000 == 0):
+                        update_size = np.sum(diff_x ** 2 + diff_s ** 2)
+                        error       = ρ * np.max((np.square(slack) / 2 - x_new) ** 2)
+                        print(f"ite1:{idx1+1} ite2:{idx2+1}  error:{error}  ΔLoss^2:{np.sum(ΔLoss ** 2)}  update_size:{update_size} update_diff:{update_diff}")
+                
+                    if update_diff <= lr:
+                        break
+                
+                u_lagrange = np.maximum(u_lagrange + ρ * (np.square(slack) / 2 - x_new), 0)
+                ρ          = ρ * 3
+                
+                error = ρ * np.max((np.square(slack) / 2 - x_new) ** 2)
+                if error <= self.tol:
+                    break
             
+            x = np.maximum(x_new, 0)
+            self.alpha, self.alpha0 = x[0:expvars, :], x[expvars, :]
+            self.alpha0 = self.alpha0.reshape([1, x.shape[1]])
+            
+            if visible_flg:
+                A       = np.hstack([x_data, np.ones([data_num, 1])])
+                B       = y_data
+                X       = np.vstack([self.alpha, self.alpha0])
+                DIFF = B - np.dot(A, X)
+                DIFF = np.dot(DIFF.T, DIFF)
+                OBJE = 1 / 2 * np.sum(np.diag(DIFF))
+                print("平均二乗誤差(MSE):", np.sum(np.diag(DIFF)) / data_num, flush=True)
+                print("目的関数(Objective): ", OBJE)
+        
         else:
             raise
         
@@ -1938,7 +1986,7 @@ class Non_Negative_Vector_Auto_Regressive:
         if self.isStandardization:
             test_data = (test_data - self.x_mean) / self.x_std_dev
         
-        y_pred = np.dot(test_data, np.exp(self.alpha)) + np.exp(self.alpha0)
+        y_pred = np.dot(test_data, self.alpha) + self.alpha0
         if self.isStandardization:
             y_pred = y_pred * self.y_std_dev + self.y_mean
         
@@ -2125,7 +2173,7 @@ class Non_Negative_Vector_Auto_Regressive:
             x_data = np.vstack([x_data, np.zeros([self.train_data.shape[1], self.train_data.shape[1]])])
 
         for idx in range(1, max + 1):
-            ma_inf[idx, :, :] = np.dot(np.exp(self.alpha.T), x_data)
+            ma_inf[idx, :, :] = np.dot(self.alpha.T, x_data)
             x_data = np.vstack([ma_inf[idx, :, :], x_data[:-self.train_data.shape[1], :]])
         
         self.ma_inf = ma_inf
@@ -2165,7 +2213,7 @@ class Non_Negative_Vector_Auto_Regressive:
                 #tmp = self.alpha.reshape(self.lags, self.train_data.shape[1], self.train_data.shape[1])
                 #tmp = tmp.swapaxes(1,2).reshape(self.lags * self.train_data.shape[1], self.train_data.shape[1])
                 #irf[idx, :, :] = np.dot(x_data, tmp)
-                irf[idx, :, :] = np.dot(np.exp(self.alpha.T), x_data)
+                irf[idx, :, :] = np.dot(self.alpha.T, x_data)
                 x_data = np.vstack([irf[idx, :, :], x_data[:-self.train_data.shape[1], :]])
             """irf_data = self.irf(period, orth=False)
             L = np.linalg.cholesky(self.sigma)
@@ -2209,7 +2257,7 @@ class Non_Negative_Vector_Auto_Regressive:
         
         fevd[0, :, :] = fevd[0, :, :] ** 2
         for idx in range(1, period + 1):
-            fevd[idx, :, :] = np.dot(np.exp(self.alpha.T), x_data)
+            fevd[idx, :, :] = np.dot(self.alpha.T, x_data)
             x_data = np.vstack([fevd[idx, :, :], x_data[:-self.train_data.shape[1], :]])
             
             fevd[idx, :, :] = fevd[idx, :, :] ** 2
