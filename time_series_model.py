@@ -1912,14 +1912,14 @@ class Non_Negative_Vector_Auto_Regressive:
                     if update_diff <= lr:
                         break
                 
-                u_lagrange = np.maximum(u_lagrange + ρ * (np.square(slack) / 2 - x_new), 0)
+                u_lagrange = u_lagrange + ρ * (np.square(slack) / 2 - x_new)
                 ρ          = ρ * 3
                 
                 error = ρ * np.max((np.square(slack) / 2 - x_new) ** 2)
                 if error <= self.tol:
                     break
             
-            x = np.maximum(x_new, 0)
+            x = np.square(slack) / 2
             self.alpha, self.alpha0 = x[0:expvars, :], x[expvars, :]
             self.alpha0 = self.alpha0.reshape([1, x.shape[1]])
             
