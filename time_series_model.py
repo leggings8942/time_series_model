@@ -102,20 +102,31 @@ class Update_Rafael:
         if self.beta - self.beta_t > 0.1:
             v_hat  = self.v * self.σ_coef / (self.beta - self.beta_t)
             w_hat  = self.w * self.σ_coef / (self.beta - self.beta_t)
-            σ_w    = np.sqrt(w_hat + ε)
             σ_com  = np.sqrt((v_hat + w_hat + ε) / 2)
-            
-            output = m_hat / σ_com
+            # σ_hes  = np.sqrt(w_hat + ε)
             
             # self-healing canonicalization
+            R = 0
             if self.isSHC:
-                m_bese  = m_hat / np.linalg.norm(m_hat, axis=0)
-                vec_map = np.sum(σ_w * output * m_bese, axis=0) * m_bese
-                output  = vec_map / σ_w
+                def halley(r):
+                    tmp1 = σ_com + r
+                    tmp2 = np.square(m_hat / tmp1)
+                    f    =     np.sum(tmp2,                   axis=0) - r
+                    df   = 2 * np.sum(tmp2 / tmp1,            axis=0) + 1
+                    ddf  = 6 * np.sum(tmp2 / np.square(tmp1), axis=0)
+                    return r + 2 * f * df / (2 * np.square(df) - f * ddf)
+                
+                R = np.sum(np.square(m_hat / (σ_com + 1)), axis=0) / 2
+                R = halley(R)
+                R = halley(R)
+                # R = halley(R)      # option: 精度を求めるならハレー法を3回適用する
+                R = np.maximum(R, 1) # option: 収束速度は遅くなるが、安定性が向上する
+                
+            output = self.alpha * m_hat / (σ_com + R)
         else:
-            output = np.sign(grads)
+            output = self.alpha * np.sign(grads)
         
-        return self.alpha * output
+        return output
 
 
 
@@ -1724,12 +1735,10 @@ class Non_Negative_Vector_Auto_Regressive:
             # 参考に標準正規分布の確立分布　 数表を掲載する
             # URL:https://kyozaikenkyu-statistics.blog.jp/%E6%A8%99%E6%BA%96%E6%AD%A3%E8%A6%8F%E5%88%86%E5%B8%83%E6%95%B0%E8%A1%A8.pdf
             # 主に以下の値が利用されると想定する
-            # 優位水準30%  (片側15.0%)・・・1.04
+            # 有意水準50%  (片側25.0%)・・・0.67
+            # 有意水準40%  (片側20.0%)・・・0.84
             # 優位水準20%  (片側10.0%)・・・1.28
             # 優位水準10%  (片側5.0%) ・・・1.64
-            # 優位水準5%   (片側2.5%) ・・・1.96
-            # 優位水準3%   (片側1.5%) ・・・2.17
-            # 優位水準1%   (片側0.5%) ・・・2.58
             
             # x軸の標準化
             self.x_mean    = np.mean(x_data, axis=0)
@@ -1738,7 +1747,7 @@ class Non_Negative_Vector_Auto_Regressive:
             x_data = (x_data - self.x_mean) / self.x_std_dev
             
             # y軸の標準化
-            self.y_mean    = np.mean(y_data, axis=0) - 1.28 * np.std( y_data, axis=0)
+            self.y_mean    = np.mean(y_data, axis=0) - 0.7464760202565679 * np.std( y_data, axis=0)
             self.y_std_dev = np.std( y_data, axis=0)
             self.y_std_dev[self.y_std_dev < 1e-32] = 1
             y_data = (y_data - self.y_mean) / self.y_std_dev
@@ -1852,7 +1861,7 @@ class Non_Negative_Vector_Auto_Regressive:
             A            = np.hstack([x_data, np.ones([data_num, 1])])
             b            = y_data
             x_new        = self.random.random([A.shape[1], b.shape[1]])
-            Optimizer    = Update_Rafael(0.1, beta=0.9, isSHC=True)
+            Optimizer    = Update_Rafael(0.1, beta=0.9, isSHC=False)
             for idx in range(0, self.max_iterate):
                 ΔSQUA  = np.square(x_new) / 2
                 ΔLoss  = b - np.dot(A, ΔSQUA)
@@ -1889,10 +1898,9 @@ class Non_Negative_Vector_Auto_Regressive:
             u_lagrange = np.zeros([A.shape[1], b.shape[1]])
             x_new      = self.random.random([A.shape[1], b.shape[1]])
             ρ          = 1
-            lr         = 0.01
             for idx1 in range(0, self.max_iterate):
-                Optimizer_X = Update_Rafael(lr, beta=0.99, isSHC=True)
-                Optimizer_S = Update_Rafael(lr, beta=0.99, isSHC=True)
+                Optimizer_X = Update_Rafael(0.01, beta=0.99, isSHC=True)
+                Optimizer_S = Update_Rafael(0.01, beta=0.99, isSHC=True)
                 for idx2 in range(0, self.max_iterate):
                     ΔLoss = b - np.dot(A, x_new)
                     ΔDX   = -np.dot(A.T, ΔLoss) - u_lagrange - ρ * (np.square(slack) / 2 - x_new)
@@ -1909,7 +1917,7 @@ class Non_Negative_Vector_Auto_Regressive:
                         error       = ρ * np.max((np.square(slack) / 2 - x_new) ** 2)
                         print(f"ite1:{idx1+1} ite2:{idx2+1}  error:{error}  ΔLoss^2:{np.sum(ΔLoss ** 2)}  update_size:{update_size} update_diff:{update_diff}")
                 
-                    if update_diff <= lr:
+                    if update_diff <= 0.01:
                         break
                 
                 u_lagrange = u_lagrange + ρ * (np.square(slack) / 2 - x_new)
