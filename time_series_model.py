@@ -108,18 +108,20 @@ class Update_Rafael:
             # self-healing canonicalization
             R = 0
             if self.isSHC:
-                def halley(r):
+                def chebyshev(r):
                     tmp1 = σ_com + r
                     tmp2 = np.square(m_hat / tmp1)
                     f    =     np.sum(tmp2,                   axis=0) - r
                     df   = 2 * np.sum(tmp2 / tmp1,            axis=0) + 1
                     ddf  = 6 * np.sum(tmp2 / np.square(tmp1), axis=0)
-                    return r + 2 * f * df / (2 * np.square(df) - f * ddf)
+                    newt = f / df
+                    return r + newt + ddf / (2 * df) * np.square(newt)
                 
-                R = np.sum(np.square(m_hat / (σ_com + 1)), axis=0) / 2
-                R = halley(R)
-                R = halley(R)
-                # R = halley(R)      # option: 精度を求めるならハレー法を3回適用する
+                r_min = np.sum(np.square(m_hat / σ_com), axis=0)
+                r_max = np.cbrt(np.sum(np.square(m_hat), axis=0))
+                R = np.maximum(np.minimum(r_max, r_min), 1)
+                R = chebyshev(R)
+                # R = chebyshev(R)     # option: 精度を求めるならチェビシェフ法を2回適用する
                 R = np.maximum(R, 1) # option: 収束速度は遅くなるが、安定性が向上する
                 
             output = self.alpha * m_hat / (σ_com + R)
